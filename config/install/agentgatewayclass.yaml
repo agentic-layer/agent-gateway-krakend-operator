@@ -1,0 +1,13 @@
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: AgentGatewayClass
+metadata:
+  name: krakend
+  labels:
+    app.kubernetes.io/name: agent-gateway-krakend-operator
+    app.kubernetes.io/instance: agent-gateway-krakend-operator
+    app.kubernetes.io/part-of: agent-gateway-krakend-operator
+    app.kubernetes.io/managed-by: kustomize
+  annotations:
+    agentgatewayclass.kubernetes.io/is-default-class: "true"
+spec:
+  controller: runtime.agentic-layer.ai/agent-gateway-krakend-controller

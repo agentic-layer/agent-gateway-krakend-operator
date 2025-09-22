@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -37,13 +38,15 @@ const namespace = "agent-gateway-krakend-operator-system"
 const serviceAccountName = "agent-gateway-krakend-operator-controller-manager"
 
 // metricsServiceName is the name of the metrics service of the project
-const metricsServiceName = "agent-gateway-krakend-operator-controller-manager-metrics-service"
+const metricsServiceName = "agent-gateway-krakend-operator-metrics-service"
 
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "agent-gateway-krakend-operator-metrics-binding"
 
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
+	const agentRuntimeInstallUrl = "https://github.com/agentic-layer/agent-runtime-operator/releases/" +
+		"download/v0.4.5/install.yaml"
 
 	// Before running the tests, set up the environment by creating the namespace,
 	// enforce the restricted security policy to the namespace, installing CRDs,
@@ -60,10 +63,25 @@ var _ = Describe("Manager", Ordered, func() {
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
 
-		By("installing CRDs")
-		cmd = exec.Command("make", "install")
+		By("deploying the agent runtime")
+		cmd = exec.Command("kubectl", "apply", "-f", agentRuntimeInstallUrl)
 		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
+		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the agent runtime")
+
+		By("waiting for agent-runtime-operator-controller-manager to be ready")
+		Eventually(func() error {
+			cmd := exec.Command("kubectl", "get", "deployment",
+				"agent-runtime-operator-controller-manager", "-n", "agent-runtime-operator-system",
+				"-o", "jsonpath={.status.readyReplicas}")
+			output, err := utils.Run(cmd)
+			if err != nil {
+				return err
+			}
+			if output == "" || output == "0" {
+				return fmt.Errorf("agent-runtime-operator deployment not ready")
+			}
+			return nil
+		}, 2*time.Minute, 10*time.Second).Should(Succeed(), "agent-runtime-operator deployment should be ready")
 
 		By("deploying the controller-manager")
 		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
@@ -80,6 +98,10 @@ var _ = Describe("Manager", Ordered, func() {
 
 		By("undeploying the controller-manager")
 		cmd = exec.Command("make", "undeploy")
+		_, _ = utils.Run(cmd)
+
+		By("cleaning up the agent runtime")
+		cmd = exec.Command("kubectl", "delete", "-f", agentRuntimeInstallUrl)
 		_, _ = utils.Run(cmd)
 
 		By("uninstalling CRDs")
@@ -258,14 +280,106 @@ var _ = Describe("Manager", Ordered, func() {
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
 
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput := getMetricsOutput()
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+		Context("Agent Gateway Routing", func() {
+			AfterEach(func() {
+				By("cleaning up test resources")
+				cmd := exec.Command("kubectl", "delete", "pod", "test-routing")
+				_, _ = utils.Run(cmd)
+
+				cmd = exec.Command("kubectl", "delete", "pod", "wiremock-config")
+				_, _ = utils.Run(cmd)
+
+				cmd = exec.Command("kubectl", "delete", "agent", "mocked-agent")
+				_, _ = utils.Run(cmd)
+
+				cmd = exec.Command("kubectl", "delete", "agentgateway", "agent-gateway")
+				_, _ = utils.Run(cmd)
+			})
+
+			It("should deploy an agent and agent gateway and test routing", func() {
+				By("deploying a test agent")
+				cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/crs/mocked_agent.yaml")
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent")
+
+				By("waiting for agent deployment to be ready")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent", "-o", "jsonpath={.status.readyReplicas}")
+					output, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if output == "" || output == "0" {
+						return fmt.Errorf("mocked-agent deployment not ready")
+					}
+					return nil
+				}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent deployment should be ready")
+
+				By("configuring wiremock with test endpoint")
+				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/wiremock-config.yaml")
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to configure wiremock endpoint")
+
+				By("deploying a test agent gateway")
+				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/agent-gateway.yaml")
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent gateway")
+
+				By("waiting for agent gateway to be ready")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "get", "deployment", "agent-gateway", "-o", "jsonpath={.status.readyReplicas}")
+					output, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if output == "" || output == "0" {
+						return fmt.Errorf("agent gateway deployment not ready yet, status: %s", output)
+					}
+					return nil
+				}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent gateway should be ready")
+
+				By("testing routing from gateway to agent")
+				cmd = exec.Command("kubectl", "run", "test-routing", "--restart=Never",
+					"--image=curlimages/curl:latest",
+					"--overrides",
+					`{
+					"spec": {
+						"containers": [{
+							"name": "curl",
+							"image": "curlimages/curl:latest",
+							"command": ["/bin/sh", "-c"],
+							"args": ["curl -XPOST -v http://agent-gateway:10000/mocked-agent"],
+							"securityContext": {
+								"allowPrivilegeEscalation": false,
+								"capabilities": {
+									"drop": ["ALL"]
+								},
+								"runAsNonRoot": true,
+								"runAsUser": 1000,
+								"seccompProfile": {
+									"type": "RuntimeDefault"
+								}
+							}
+						}]
+					}
+				}`)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Gateway should successfully route to agent")
+
+				By("checking that the response contains HTTP 200 status")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "logs", "test-routing")
+					logOutput, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if !strings.Contains(logOutput, "200 OK") {
+						return fmt.Errorf("expected HTTP 200 status code, got: %s", logOutput)
+					}
+					return nil
+				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should receive HTTP 200 response")
+			})
+		})
 	})
 })
 
