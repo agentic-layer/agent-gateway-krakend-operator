@@ -1,0 +1,15 @@
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: Agent
+metadata:
+  labels:
+    app.kubernetes.io/name: agent-runtime-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: mocked-agent
+spec:
+  framework: google-adk
+  image: wiremock/wiremock:3.13.1
+  protocols:
+    - type: A2A
+      port: 8080
+  replicas: 1
+  exposed: true

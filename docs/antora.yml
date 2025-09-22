@@ -1,0 +1,6 @@
+name: agent-gateway-krakend-operator
+title: Agent Gateway KrakenD Operator
+version: main
+start_page: ROOT:index.adoc
+nav:
+- modules/ROOT/nav.adoc
