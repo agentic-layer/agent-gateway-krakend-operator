@@ -197,17 +197,17 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 
 .PHONY: build-installer
 build-installer: manifests generate kustomize ## Generate a consolidated YAML with CRDs and deployment.
-    mkdir -p dist
-    cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
-    $(KUSTOMIZE) build config/default > dist/install.yaml
+	mkdir -p dist
+	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
+	$(KUSTOMIZE) build config/default > dist/install.yaml
 
 .PHONY: flux-push
 flux-push: manifests generate kustomize ## Push the manifests to a oci repository for FluxCD to consume.
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
 	flux push artifact $(MANIFESTS_IMG) \
-    	--path="./config" \
-    	--source="$(shell git config --get remote.origin.url)" \
-    	--revision="$(VERSION)"
+		--path="./config" \
+		--source="$(shell git config --get remote.origin.url)" \
+		--revision="$(VERSION)"
 
 .PHONY: flux-tag-latest
 flux-tag-latest:
@@ -379,4 +379,4 @@ catalog-push: ## Push a catalog image.
 
 .PHONY: kind
 kind-load:
-    $(KIND) load docker-image $(IMG)
+	$(KIND) load docker-image $(IMG)
