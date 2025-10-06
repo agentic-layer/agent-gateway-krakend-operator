@@ -40,7 +40,7 @@ import (
 
 const DefaultGatewayPort = 8080
 const ControllerName = "runtime.agentic-layer.ai/agent-gateway-krakend-controller"
-const Image = "ghcr.io/agentic-layer/agent-gateway-krakend:0.0.1"
+const Image = "ghcr.io/agentic-layer/agent-gateway-krakend:0.1.0"
 
 // KrakendBackend represents a backend configuration in KrakenD
 type KrakendBackend struct {
@@ -68,6 +68,8 @@ type KrakendConfigData struct {
 	Port int32
 	// Timeout defines the request timeout duration
 	Timeout string
+	// PluginNames contains ordered list of plugin handler names
+	PluginNames []string
 	// Endpoints contains all configured API endpoints
 	Endpoints []KrakendEndpoint
 }
@@ -407,9 +409,10 @@ func (r *AgentGatewayReconciler) createConfigMapForKrakend(ctx context.Context, 
 	}
 
 	templateData := KrakendConfigData{
-		Port:      DefaultGatewayPort,
-		Timeout:   agentGateway.Spec.Timeout.Duration.String(),
-		Endpoints: endpoints,
+		Port:        DefaultGatewayPort,
+		Timeout:     agentGateway.Spec.Timeout.Duration.String(),
+		PluginNames: []string{"openai-a2a"}, // Order matters here
+		Endpoints:   endpoints,
 	}
 
 	// Parse and execute the template

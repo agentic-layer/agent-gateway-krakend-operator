@@ -20,8 +20,18 @@ package controller
 const krakendConfigTemplate = `{
     "$schema": "https://www.krakend.io/schema/v2.10/krakend.json",
     "version": 3,
+	"plugin": {
+		"pattern": ".so",
+		"folder": "/plugins/"
+	},
     "port": {{.Port}},
     "extra_config": {
+		"plugin/http-server": {
+			"@comment_name": "Name order defines handler order. Last entry is outermost/first handler.",
+			"name": [{{range $i, $pluginName := .PluginNames}}{{if $i}},{{end}}
+				"{{$pluginName}}"{{end}}
+			]
+		},
         "router": {
             "disable_access_log": false,
             "hide_version_header": true
