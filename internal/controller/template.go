@@ -22,7 +22,7 @@ const krakendConfigTemplate = `{
     "version": 3,
 	"plugin": {
 		"pattern": ".so",
-		"folder": "/plugins/"
+		"folder": "/unleash/tentacles/"
 	},
     "port": {{.Port}},
     "extra_config": {
