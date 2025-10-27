@@ -416,7 +416,7 @@ func (r *AgentGatewayReconciler) createConfigMapForKrakend(ctx context.Context, 
 	templateData := KrakendConfigData{
 		Port:        DefaultGatewayPort,
 		Timeout:     agentGateway.Spec.Timeout.Duration.String(),
-		PluginNames: []string{"openai-a2a"}, // Order matters here
+		PluginNames: []string{"agentcard-rw", "openai-a2a"}, // Order matters here
 		Endpoints:   endpoints,
 	}
 
@@ -562,6 +562,9 @@ func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, a
 		return []KrakendEndpoint{}, nil
 	}
 
+	// Pre-allocate slice with capacity for RPC + agent card endpoint
+	endpoints := make([]KrakendEndpoint, 0, 2)
+
 	// Parse the URL to separate host from path
 	parsedURL, err := url.Parse(agent.Status.Url)
 	if err != nil {
@@ -571,14 +574,25 @@ func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, a
 	// Construct the host (scheme + host + port)
 	hostURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
 
+	// Create agent card endpoint
+	endpoints = append(endpoints, KrakendEndpoint{
+		Endpoint:       fmt.Sprintf("/%s%s", agent.Name, parsedURL.Path),
+		OutputEncoding: "no-op",
+		Method:         "GET",
+		Backend: []KrakendBackend{
+			{
+				Host:       []string{hostURL},
+				URLPattern: parsedURL.Path,
+			},
+		},
+	})
+
 	// Remove /.well-known/agent-card.json from the path to get the RPC URL
 	urlPattern := strings.TrimSuffix(parsedURL.Path, "/.well-known/agent-card.json")
 
-	// Create a single A2A endpoint for the agent
-	endpointPath := fmt.Sprintf("/%s", agent.Name)
-
-	endpoint := KrakendEndpoint{
-		Endpoint:       endpointPath,
+	// Create A2A endpoint for the agent (for both service and external URLs)
+	endpoints = append(endpoints, KrakendEndpoint{
+		Endpoint:       fmt.Sprintf("/%s", agent.Name),
 		OutputEncoding: "no-op",
 		Method:         "POST", // A2A protocol uses POST
 		Backend: []KrakendBackend{
@@ -587,9 +601,9 @@ func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, a
 				URLPattern: urlPattern,
 			},
 		},
-	}
+	})
 
-	return []KrakendEndpoint{endpoint}, nil
+	return endpoints, nil
 }
 
 // configMapNeedsUpdate compares existing and desired ConfigMaps to determine if an update is needed

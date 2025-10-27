@@ -796,16 +796,27 @@ var _ = Describe("AgentGateway Controller", func() {
 			endpoints, err := reconciler.generateEndpointForAgent(ctx, agent)
 
 			Expect(err).NotTo(HaveOccurred())
-			Expect(endpoints).To(HaveLen(1))
+			Expect(endpoints).To(HaveLen(2)) // Agent card endpoint + A2A protocol endpoint
 
-			endpoint := endpoints[0]
-			Expect(endpoint.Endpoint).To(Equal("/test-agent"))
-			Expect(endpoint.OutputEncoding).To(Equal("no-op"))
-			Expect(endpoint.Method).To(Equal("POST"))
-			Expect(endpoint.Backend).To(HaveLen(1))
-			Expect(endpoint.Backend[0].Host).To(HaveLen(1))
-			Expect(endpoint.Backend[0].Host[0]).To(Equal("http://test-agent-service.default.svc.cluster.local:8080"))
-			Expect(endpoint.Backend[0].URLPattern).To(Equal(""))
+			// First endpoint should be agent card endpoint
+			agentCardEndpoint := endpoints[0]
+			Expect(agentCardEndpoint.Endpoint).To(Equal("/test-agent/.well-known/agent-card.json"))
+			Expect(agentCardEndpoint.OutputEncoding).To(Equal("no-op"))
+			Expect(agentCardEndpoint.Method).To(Equal("GET"))
+			Expect(agentCardEndpoint.Backend).To(HaveLen(1))
+			Expect(agentCardEndpoint.Backend[0].Host).To(HaveLen(1))
+			Expect(agentCardEndpoint.Backend[0].Host[0]).To(Equal("http://test-agent-service.default.svc.cluster.local:8080"))
+			Expect(agentCardEndpoint.Backend[0].URLPattern).To(Equal("/.well-known/agent-card.json"))
+
+			// Second endpoint should be A2A protocol endpoint
+			a2aEndpoint := endpoints[1]
+			Expect(a2aEndpoint.Endpoint).To(Equal("/test-agent"))
+			Expect(a2aEndpoint.OutputEncoding).To(Equal("no-op"))
+			Expect(a2aEndpoint.Method).To(Equal("POST"))
+			Expect(a2aEndpoint.Backend).To(HaveLen(1))
+			Expect(a2aEndpoint.Backend[0].Host).To(HaveLen(1))
+			Expect(a2aEndpoint.Backend[0].Host[0]).To(Equal("http://test-agent-service.default.svc.cluster.local:8080"))
+			Expect(a2aEndpoint.Backend[0].URLPattern).To(Equal(""))
 		})
 
 		It("should use custom URL from agent status and strip agent-card suffix", func() {
@@ -818,12 +829,21 @@ var _ = Describe("AgentGateway Controller", func() {
 			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithCustomUrl)
 
 			Expect(err).NotTo(HaveOccurred())
-			Expect(endpoints).To(HaveLen(1))
+			Expect(endpoints).To(HaveLen(2))
 
-			endpoint := endpoints[0]
-			Expect(endpoint.Endpoint).To(Equal("/custom-agent"))
-			Expect(endpoint.Backend[0].Host[0]).To(Equal("http://custom-backend.example.com:9000"))
-			Expect(endpoint.Backend[0].URLPattern).To(Equal("/api/v1"))
+			// First endpoint should be agent card endpoint
+			agentCardEndpoint := endpoints[0]
+			Expect(agentCardEndpoint.Endpoint).To(Equal("/custom-agent/api/v1/.well-known/agent-card.json"))
+			Expect(agentCardEndpoint.Method).To(Equal("GET"))
+			Expect(agentCardEndpoint.Backend[0].Host[0]).To(Equal("http://custom-backend.example.com:9000"))
+			Expect(agentCardEndpoint.Backend[0].URLPattern).To(Equal("/api/v1/.well-known/agent-card.json"))
+
+			// Second endpoint should be A2A endpoint
+			a2aEndpoint := endpoints[1]
+			Expect(a2aEndpoint.Endpoint).To(Equal("/custom-agent"))
+			Expect(a2aEndpoint.Method).To(Equal("POST"))
+			Expect(a2aEndpoint.Backend[0].Host[0]).To(Equal("http://custom-backend.example.com:9000"))
+			Expect(a2aEndpoint.Backend[0].URLPattern).To(Equal("/api/v1"))
 		})
 
 		It("should correctly parse URL with only agent-card suffix", func() {
@@ -836,11 +856,21 @@ var _ = Describe("AgentGateway Controller", func() {
 			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithNoPath)
 
 			Expect(err).NotTo(HaveOccurred())
-			Expect(endpoints).To(HaveLen(1))
+			Expect(endpoints).To(HaveLen(2))
 
-			endpoint := endpoints[0]
-			Expect(endpoint.Backend[0].Host[0]).To(Equal("http://backend.example.com:8080"))
-			Expect(endpoint.Backend[0].URLPattern).To(Equal(""))
+			// First endpoint should be agent card endpoint
+			agentCardEndpoint := endpoints[0]
+			Expect(agentCardEndpoint.Endpoint).To(Equal("/no-path-agent/.well-known/agent-card.json"))
+			Expect(agentCardEndpoint.Method).To(Equal("GET"))
+			Expect(agentCardEndpoint.Backend[0].Host[0]).To(Equal("http://backend.example.com:8080"))
+			Expect(agentCardEndpoint.Backend[0].URLPattern).To(Equal("/.well-known/agent-card.json"))
+
+			// Second endpoint should be A2A endpoint
+			a2aEndpoint := endpoints[1]
+			Expect(a2aEndpoint.Endpoint).To(Equal("/no-path-agent"))
+			Expect(a2aEndpoint.Method).To(Equal("POST"))
+			Expect(a2aEndpoint.Backend[0].Host[0]).To(Equal("http://backend.example.com:8080"))
+			Expect(a2aEndpoint.Backend[0].URLPattern).To(Equal(""))
 		})
 	})
 
@@ -1065,14 +1095,22 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(jsonData["version"]).To(Equal(float64(3)))
 			Expect(jsonData["port"]).To(Equal(float64(DefaultGatewayPort)))
 			Expect(jsonData["name"]).To(Equal("agent-gateway-krakend"))
-			Expect(jsonData["endpoints"]).To(HaveLen(1))
+			Expect(jsonData["endpoints"]).To(HaveLen(2)) // Agent card endpoint + A2A protocol endpoint
 
 			endpoints, ok := jsonData["endpoints"].([]interface{})
 			Expect(ok).To(BeTrue())
-			endpoint := endpoints[0].(map[string]interface{})
-			Expect(endpoint["endpoint"]).To(Equal("/test-agent"))
-			Expect(endpoint["method"]).To(Equal("POST"))
-			Expect(endpoint["output_encoding"]).To(Equal("no-op"))
+
+			// First endpoint should be agent card endpoint
+			agentCardEndpoint := endpoints[0].(map[string]interface{})
+			Expect(agentCardEndpoint["endpoint"]).To(Equal("/test-agent/.well-known/agent-card.json"))
+			Expect(agentCardEndpoint["method"]).To(Equal("GET"))
+			Expect(agentCardEndpoint["output_encoding"]).To(Equal("no-op"))
+
+			// Second endpoint should be A2A protocol endpoint
+			a2aEndpoint := endpoints[1].(map[string]interface{})
+			Expect(a2aEndpoint["endpoint"]).To(Equal("/test-agent"))
+			Expect(a2aEndpoint["method"]).To(Equal("POST"))
+			Expect(a2aEndpoint["output_encoding"]).To(Equal("no-op"))
 		})
 
 		It("should handle custom timeout configuration", func() {
@@ -1137,8 +1175,9 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			endpoints := jsonData["endpoints"].([]interface{})
-			endpoint := endpoints[0].(map[string]interface{})
-			backends := endpoint["backend"].([]interface{})
+			// Note: endpoints[0] is agent card endpoint, endpoints[1] is A2A protocol endpoint
+			a2aEndpoint := endpoints[1].(map[string]interface{})
+			backends := a2aEndpoint["backend"].([]interface{})
 			backend := backends[0].(map[string]interface{})
 			hosts := backend["host"].([]interface{})
 
