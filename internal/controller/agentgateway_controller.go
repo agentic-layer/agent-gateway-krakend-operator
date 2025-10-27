@@ -411,7 +411,7 @@ func (r *AgentGatewayReconciler) createConfigMapForKrakend(ctx context.Context, 
 	templateData := KrakendConfigData{
 		Port:        DefaultGatewayPort,
 		Timeout:     agentGateway.Spec.Timeout.Duration.String(),
-		PluginNames: []string{"openai-a2a"}, // Order matters here
+		PluginNames: []string{"agentcard-rw", "openai-a2a"}, // Order matters here
 		Endpoints:   endpoints,
 	}
 
