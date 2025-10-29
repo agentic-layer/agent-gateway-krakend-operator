@@ -13,3 +13,11 @@ spec:
       port: 8080
   replicas: 1
   exposed: true
+  volumes:
+    - name: wiremock-mappings
+      configMap:
+        name: mocked-agent-mappings
+  volumeMounts:
+    - name: wiremock-mappings
+      mountPath: /home/wiremock/mappings
+      readOnly: true
