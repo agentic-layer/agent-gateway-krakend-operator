@@ -875,6 +875,56 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(endpoints[2].Backend[0].Host[0]).To(Equal("http://multi-protocol-agent-service.default.svc.cluster.local:8080"))
 			Expect(endpoints[2].Backend[0].URLPattern).To(Equal(""))
 		})
+
+		It("should generate agent card endpoint with protocol path", func() {
+			// Create agent with A2A protocol that has a path
+			agentWithPath := &agentruntimev1alpha1.Agent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "agent-with-path",
+					Namespace: agentGatewayNamespace,
+				},
+				Spec: agentruntimev1alpha1.AgentSpec{
+					Exposed: true,
+					Protocols: []agentruntimev1alpha1.AgentProtocol{
+						{
+							Name: "default",
+							Type: "A2A",
+							Port: 8080,
+							Path: "/api/v1",
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, agentWithPath)).To(Succeed())
+
+			// Create service for this agent
+			service := createTestServiceForAgent("agent-with-path", agentGatewayNamespace, agentWithPath.UID)
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			// Generate endpoints
+			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithPath)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(endpoints).To(HaveLen(2)) // Agent card endpoint + A2A protocol endpoint
+
+			// First endpoint should be agent card with path
+			agentCardEndpoint := endpoints[0]
+			Expect(agentCardEndpoint.Endpoint).To(Equal("/agent-with-path/api/v1/.well-known/agent-card.json"))
+			Expect(agentCardEndpoint.OutputEncoding).To(Equal("no-op"))
+			Expect(agentCardEndpoint.Method).To(Equal("GET"))
+			Expect(agentCardEndpoint.Backend).To(HaveLen(1))
+			Expect(agentCardEndpoint.Backend[0].Host).To(HaveLen(1))
+			Expect(agentCardEndpoint.Backend[0].Host[0]).To(Equal("http://agent-with-path-service.default.svc.cluster.local:8080"))
+			Expect(agentCardEndpoint.Backend[0].URLPattern).To(Equal("/api/v1/.well-known/agent-card.json"))
+
+			// Second endpoint should be A2A protocol with path
+			a2aEndpoint := endpoints[1]
+			Expect(a2aEndpoint.Endpoint).To(Equal("/agent-with-path/api/v1"))
+			Expect(a2aEndpoint.Method).To(Equal("POST"))
+			Expect(a2aEndpoint.Backend).To(HaveLen(1))
+			Expect(a2aEndpoint.Backend[0].Host[0]).To(Equal("http://agent-with-path-service.default.svc.cluster.local:8080"))
+			Expect(a2aEndpoint.Backend[0].URLPattern).To(Equal("/api/v1"))
+		})
 	})
 
 	Describe("Error scenarios", func() {
@@ -1229,13 +1279,14 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			endpoints := jsonData["endpoints"].([]interface{})
-			endpoint := endpoints[0].(map[string]interface{})
-			backends := endpoint["backend"].([]interface{})
+			// Note: endpoints[0] is agent card endpoint, endpoints[1] is A2A protocol endpoint
+			a2aEndpoint := endpoints[1].(map[string]interface{})
+			backends := a2aEndpoint["backend"].([]interface{})
 			backend := backends[0].(map[string]interface{})
 			hosts := backend["host"].([]interface{})
 
 			Expect(hosts[0]).To(Equal("http://test-agent-service.default.svc.cluster.local:8080"))
-			Expect(backend["url_pattern"]).To(Equal("")) // Should be empty for pass-through
+			Expect(backend["url_pattern"]).To(Equal("")) // Should be empty for A2A pass-through
 		})
 	})
 
