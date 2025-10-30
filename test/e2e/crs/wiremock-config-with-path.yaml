@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: wiremock-config-with-path
+spec:
+  restartPolicy: Never
+  containers:
+  - name: curl
+    image: curlimages/curl:latest
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      curl -X POST 'http://mocked-agent-with-path:8080/__admin/mappings' \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "request": {
+          "method": "POST",
+          "urlPath": "/api/v1"
+        },
+        "response": {
+          "status": 200,
+          "body": "This is a mocked response from path-based agent!",
+          "headers": {
+            "Content-Type": "text/plain"
+          }
+        }
+      }'
+
+      curl -X POST 'http://mocked-agent-with-path:8080/__admin/mappings' \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "request": {
+          "method": "GET",
+          "urlPath": "/api/v1/.well-known/agent-card.json"
+        },
+        "response": {
+          "status": 200,
+          "jsonBody": {
+            "name": "mocked-agent-with-path",
+            "description": "Test agent with protocol path",
+            "version": "1.0.0",
+            "capabilities": ["conversation", "task-execution"],
+            "protocols": {
+              "a2a": {
+                "endpoint": "/api/v1",
+                "methods": ["POST"]
+              }
+            },
+            "metadata": {
+              "author": "PAAL Team",
+              "license": "Apache-2.0",
+              "tags": ["test", "e2e", "path-based"]
+            },
+            "endpoints": [
+              {
+                "path": "/api/v1",
+                "method": "POST",
+                "description": "Main agent endpoint with path"
+              }
+            ]
+          },
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        }
+      }'
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+      runAsNonRoot: true
+      runAsUser: 1000
+      seccompProfile:
+        type: RuntimeDefault
