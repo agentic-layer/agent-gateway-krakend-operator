@@ -379,6 +379,106 @@ var _ = Describe("Manager", Ordered, func() {
 					return nil
 				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should receive HTTP 200 response")
 			})
+
+			It("should route agent card endpoint requests correctly", func() {
+				By("deploying a test agent")
+				cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/crs/mocked_agent.yaml")
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent")
+
+				By("waiting for agent deployment to be ready")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent", "-o", "jsonpath={.status.readyReplicas}")
+					output, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if output == "" || output == "0" {
+						return fmt.Errorf("mocked-agent deployment not ready")
+					}
+					return nil
+				}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent deployment should be ready")
+
+				By("configuring wiremock with agent card endpoint")
+				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/wiremock-config.yaml")
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to configure wiremock endpoint")
+
+				By("deploying a test agent gateway")
+				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/agent-gateway.yaml")
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent gateway")
+
+				By("waiting for agent gateway to be ready")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "get", "deployment", "agent-gateway", "-o", "jsonpath={.status.readyReplicas}")
+					output, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if output == "" || output == "0" {
+						return fmt.Errorf("agent gateway deployment not ready yet, status: %s", output)
+					}
+					return nil
+				}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent gateway should be ready")
+
+				By("testing agent card endpoint routing from gateway to agent")
+				cmd = exec.Command("kubectl", "run", "test-routing", "--restart=Never",
+					"--image=curlimages/curl:latest",
+					"--overrides",
+					`{
+					"spec": {
+						"containers": [{
+							"name": "curl",
+							"image": "curlimages/curl:latest",
+							"command": ["/bin/sh", "-c"],
+							"args": ["curl -v http://agent-gateway:10000/mocked-agent/.well-known/agent-card.json"],
+							"securityContext": {
+								"allowPrivilegeEscalation": false,
+								"capabilities": {
+									"drop": ["ALL"]
+								},
+								"runAsNonRoot": true,
+								"runAsUser": 1000,
+								"seccompProfile": {
+									"type": "RuntimeDefault"
+								}
+							}
+						}]
+					}
+				}`)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Gateway should successfully route to agent card endpoint")
+
+				By("checking that the response contains HTTP 200 status")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "logs", "test-routing")
+					logOutput, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if !strings.Contains(logOutput, "200 OK") {
+						return fmt.Errorf("expected HTTP 200 status code, got: %s", logOutput)
+					}
+					return nil
+				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should receive HTTP 200 response")
+
+				By("verifying response contains valid agent card JSON")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "logs", "test-routing")
+					logOutput, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if !strings.Contains(logOutput, `"name":"mocked-agent"`) {
+						return fmt.Errorf("response does not contain expected agent card JSON")
+					}
+					if !strings.Contains(logOutput, `"description":"A test agent for e2e tests"`) {
+						return fmt.Errorf("response does not contain expected agent description")
+					}
+					return nil
+				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should receive valid agent card JSON response")
+			})
 		})
 	})
 })

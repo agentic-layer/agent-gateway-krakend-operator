@@ -24,6 +24,27 @@ spec:
           }
         }
       }'
+
+      curl -X POST 'http://mocked-agent:8080/__admin/mappings' \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "request": {
+          "method": "GET",
+          "urlPath": "/.well-known/agent-card.json"
+        },
+        "response": {
+          "status": 200,
+          "jsonBody": {
+            "name": "mocked-agent",
+            "description": "A test agent for e2e tests",
+            "version": "1.0.0",
+            "capabilities": ["test"]
+          },
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        }
+      }'
     securityContext:
       allowPrivilegeEscalation: false
       capabilities:
