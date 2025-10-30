@@ -479,6 +479,140 @@ var _ = Describe("Manager", Ordered, func() {
 					return nil
 				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should receive valid agent card JSON response")
 			})
+
+			It("should return properly formatted agent card data", func() {
+				By("deploying a test agent")
+				cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/crs/mocked_agent.yaml")
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent")
+
+				By("waiting for agent deployment to be ready")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent", "-o", "jsonpath={.status.readyReplicas}")
+					output, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if output == "" || output == "0" {
+						return fmt.Errorf("mocked-agent deployment not ready")
+					}
+					return nil
+				}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent deployment should be ready")
+
+				By("configuring wiremock with complete agent card")
+				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/wiremock-config.yaml")
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to configure wiremock endpoint")
+
+				By("deploying a test agent gateway")
+				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/agent-gateway.yaml")
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent gateway")
+
+				By("waiting for agent gateway to be ready")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "get", "deployment", "agent-gateway", "-o", "jsonpath={.status.readyReplicas}")
+					output, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if output == "" || output == "0" {
+						return fmt.Errorf("agent gateway deployment not ready yet, status: %s", output)
+					}
+					return nil
+				}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent gateway should be ready")
+
+				By("requesting agent card from gateway")
+				cmd = exec.Command("kubectl", "run", "test-routing", "--restart=Never",
+					"--image=curlimages/curl:latest",
+					"--overrides",
+					`{
+					"spec": {
+						"containers": [{
+							"name": "curl",
+							"image": "curlimages/curl:latest",
+							"command": ["/bin/sh", "-c"],
+							"args": ["curl -v http://agent-gateway:10000/mocked-agent/.well-known/agent-card.json"],
+							"securityContext": {
+								"allowPrivilegeEscalation": false,
+								"capabilities": {
+									"drop": ["ALL"]
+								},
+								"runAsNonRoot": true,
+								"runAsUser": 1000,
+								"seccompProfile": {
+									"type": "RuntimeDefault"
+								}
+							}
+						}]
+					}
+				}`)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Should successfully request agent card")
+
+				By("validating required schema fields are present")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "logs", "test-routing")
+					logOutput, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+
+					// Validate HTTP 200 response
+					if !strings.Contains(logOutput, "200 OK") {
+						return fmt.Errorf("expected HTTP 200 status code")
+					}
+
+					// Validate required string fields
+					requiredStringFields := []string{
+						`"name":"mocked-agent"`,
+						`"description":"A test agent for e2e tests"`,
+						`"version":"1.0.0"`,
+					}
+					for _, field := range requiredStringFields {
+						if !strings.Contains(logOutput, field) {
+							return fmt.Errorf("missing required field: %s", field)
+						}
+					}
+
+					// Validate capabilities array
+					if !strings.Contains(logOutput, `"capabilities"`) {
+						return fmt.Errorf("missing capabilities field")
+					}
+					if !strings.Contains(logOutput, `"conversation"`) {
+						return fmt.Errorf("capabilities should contain conversation")
+					}
+					if !strings.Contains(logOutput, `"task-execution"`) {
+						return fmt.Errorf("capabilities should contain task-execution")
+					}
+
+					// Validate protocols object
+					if !strings.Contains(logOutput, `"protocols"`) {
+						return fmt.Errorf("missing protocols field")
+					}
+					if !strings.Contains(logOutput, `"a2a"`) {
+						return fmt.Errorf("protocols should contain a2a")
+					}
+
+					// Validate metadata object
+					if !strings.Contains(logOutput, `"metadata"`) {
+						return fmt.Errorf("missing metadata field")
+					}
+					if !strings.Contains(logOutput, `"author":"PAAL Team"`) {
+						return fmt.Errorf("metadata should contain author")
+					}
+					if !strings.Contains(logOutput, `"license":"Apache-2.0"`) {
+						return fmt.Errorf("metadata should contain license")
+					}
+
+					// Validate endpoints array
+					if !strings.Contains(logOutput, `"endpoints"`) {
+						return fmt.Errorf("missing endpoints field")
+					}
+
+					return nil
+				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should return complete agent card schema")
+			})
 		})
 	})
 })

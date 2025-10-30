@@ -38,7 +38,25 @@ spec:
             "name": "mocked-agent",
             "description": "A test agent for e2e tests",
             "version": "1.0.0",
-            "capabilities": ["test"]
+            "capabilities": ["conversation", "task-execution"],
+            "protocols": {
+              "a2a": {
+                "endpoint": "/",
+                "methods": ["POST"]
+              }
+            },
+            "metadata": {
+              "author": "PAAL Team",
+              "license": "Apache-2.0",
+              "tags": ["test", "e2e", "mocked"]
+            },
+            "endpoints": [
+              {
+                "path": "/",
+                "method": "POST",
+                "description": "Main agent endpoint"
+              }
+            ]
           },
           "headers": {
             "Content-Type": "application/json"
