@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: wiremock-config-openai-only
+spec:
+  restartPolicy: Never
+  containers:
+  - name: curl
+    image: curlimages/curl:latest
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      curl -X POST 'http://mocked-agent-openai-only:8080/__admin/mappings' \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "request": {
+          "method": "GET",
+          "urlPath": "/v1"
+        },
+        "response": {
+          "status": 200,
+          "body": "This is a mocked OpenAI response!",
+          "headers": {
+            "Content-Type": "text/plain"
+          }
+        }
+      }'
+
+      curl -X POST 'http://mocked-agent-openai-only:8080/__admin/mappings' \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "request": {
+          "method": "GET",
+          "urlPath": "/v1/.well-known/agent-card.json"
+        },
+        "response": {
+          "status": 200,
+          "jsonBody": {
+            "name": "mocked-agent-openai-only",
+            "description": "Test OpenAI-only agent with agent card",
+            "version": "1.0.0",
+            "capabilities": ["conversation", "chat-completion"],
+            "protocols": {
+              "openai": {
+                "endpoint": "/v1",
+                "methods": ["GET"]
+              }
+            },
+            "metadata": {
+              "author": "PAAL Team",
+              "license": "Apache-2.0",
+              "tags": ["test", "e2e", "openai"]
+            },
+            "endpoints": [
+              {
+                "path": "/v1",
+                "method": "GET",
+                "description": "OpenAI endpoint"
+              }
+            ]
+          },
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        }
+      }'
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+      runAsNonRoot: true
+      runAsUser: 1000
+      seccompProfile:
+        type: RuntimeDefault

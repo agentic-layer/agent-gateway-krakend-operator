@@ -292,10 +292,16 @@ var _ = Describe("Manager", Ordered, func() {
 				cmd = exec.Command("kubectl", "delete", "pod", "wiremock-config-with-path")
 				_, _ = utils.Run(cmd)
 
+				cmd = exec.Command("kubectl", "delete", "pod", "wiremock-config-openai-only")
+				_, _ = utils.Run(cmd)
+
 				cmd = exec.Command("kubectl", "delete", "agent", "mocked-agent")
 				_, _ = utils.Run(cmd)
 
 				cmd = exec.Command("kubectl", "delete", "agent", "mocked-agent-with-path")
+				_, _ = utils.Run(cmd)
+
+				cmd = exec.Command("kubectl", "delete", "agent", "mocked-agent-openai-only")
 				_, _ = utils.Run(cmd)
 
 				cmd = exec.Command("kubectl", "delete", "agentgateway", "agent-gateway")
@@ -791,6 +797,136 @@ var _ = Describe("Manager", Ordered, func() {
 					}
 					return nil
 				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should receive valid agent card JSON with path information")
+			})
+
+			It("should create agent card endpoint for OpenAI-only agents", func() {
+				By("deploying a test agent with OpenAI protocol only")
+				cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/crs/mocked_agent_openai_only.yaml")
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy OpenAI-only test agent")
+
+				By("waiting for agent deployment to be ready")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent-openai-only", "-o", "jsonpath={.status.readyReplicas}")
+					output, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if output == "" || output == "0" {
+						return fmt.Errorf("mocked-agent-openai-only deployment not ready")
+					}
+					return nil
+				}, 3*time.Minute, 10*time.Second).Should(Succeed(), "OpenAI agent deployment should be ready")
+
+				By("configuring wiremock with OpenAI agent card endpoint")
+				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/wiremock-config-openai-only.yaml")
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to configure wiremock endpoint")
+
+				By("deploying a test agent gateway")
+				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/agent-gateway.yaml")
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent gateway")
+
+				By("waiting for agent gateway to be ready")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "get", "deployment", "agent-gateway", "-o", "jsonpath={.status.readyReplicas}")
+					output, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if output == "" || output == "0" {
+						return fmt.Errorf("agent gateway deployment not ready yet, status: %s", output)
+					}
+					return nil
+				}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent gateway should be ready")
+
+				By("testing agent card endpoint for OpenAI agent")
+				cmd = exec.Command("kubectl", "run", "test-routing", "--restart=Never",
+					"--image=curlimages/curl:latest",
+					"--overrides",
+					`{
+					"spec": {
+						"containers": [{
+							"name": "curl",
+							"image": "curlimages/curl:latest",
+							"command": ["/bin/sh", "-c"],
+							"args": ["curl -v http://agent-gateway:10000/mocked-agent-openai-only/v1/.well-known/agent-card.json"],
+							"securityContext": {
+								"allowPrivilegeEscalation": false,
+								"capabilities": {
+									"drop": ["ALL"]
+								},
+								"runAsNonRoot": true,
+								"runAsUser": 1000,
+								"seccompProfile": {
+									"type": "RuntimeDefault"
+								}
+							}
+						}]
+					}
+				}`)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Gateway should successfully route to OpenAI agent card endpoint")
+
+				By("checking that the response contains HTTP 200 status")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "logs", "test-routing")
+					logOutput, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if !strings.Contains(logOutput, "200 OK") {
+						return fmt.Errorf("expected HTTP 200 status code, got: %s", logOutput)
+					}
+					return nil
+				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should receive HTTP 200 response")
+
+				By("verifying response contains valid OpenAI agent card JSON")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "logs", "test-routing")
+					logOutput, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if !strings.Contains(logOutput, `"name":"mocked-agent-openai-only"`) {
+						return fmt.Errorf("response does not contain expected agent name")
+					}
+					if !strings.Contains(logOutput, `"chat-completion"`) {
+						return fmt.Errorf("response does not contain expected OpenAI capabilities")
+					}
+					return nil
+				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should receive valid OpenAI agent card JSON")
+
+				By("validating ConfigMap contains agent card endpoint")
+				var configMapJSON string
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "get", "configmap",
+						"agent-gateway-krakend-config",
+						"-o", "jsonpath={.data.krakend\\.json}")
+					output, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if output == "" {
+						return fmt.Errorf("ConfigMap data is empty")
+					}
+					configMapJSON = output
+					return nil
+				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "ConfigMap should contain JSON data")
+
+				var krakendConfig map[string]interface{}
+				err = json.Unmarshal([]byte(configMapJSON), &krakendConfig)
+				Expect(err).NotTo(HaveOccurred(), "Should be valid JSON")
+
+				endpoints, ok := krakendConfig["endpoints"].([]interface{})
+				Expect(ok).To(BeTrue(), "endpoints should be an array")
+				Expect(endpoints).To(HaveLen(2), "should have exactly 2 endpoints (agent card + OpenAI)")
+
+				// Verify agent card endpoint exists
+				agentCardEndpoint := endpoints[0].(map[string]interface{})
+				Expect(agentCardEndpoint["endpoint"]).To(Equal("/mocked-agent-openai-only/v1/.well-known/agent-card.json"))
+				Expect(agentCardEndpoint["method"]).To(Equal("GET"))
 			})
 		})
 	})
