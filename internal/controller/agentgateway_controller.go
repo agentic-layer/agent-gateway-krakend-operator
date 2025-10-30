@@ -559,8 +559,35 @@ func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, a
 		return nil, fmt.Errorf("agent %s has no protocols defined", agent.Name)
 	}
 
-	// Pre-allocate slice with the exact capacity needed
-	endpoints := make([]KrakendEndpoint, 0, len(agent.Spec.Protocols))
+	// Pre-allocate slice with capacity for protocols + agent card endpoint
+	endpoints := make([]KrakendEndpoint, 0, len(agent.Spec.Protocols)+1)
+
+	// Find the A2A protocol for agent card endpoint
+	var a2aProtocol *agentruntimev1alpha1.AgentProtocol
+	for i := range agent.Spec.Protocols {
+		if agent.Spec.Protocols[i].Type == "A2A" {
+			a2aProtocol = &agent.Spec.Protocols[i]
+			break
+		}
+	}
+
+	// Create agent card endpoint if A2A protocol exists
+	if a2aProtocol != nil {
+		agentCardPath := fmt.Sprintf("/%s%s/.well-known/agent-card.json", agent.Name, a2aProtocol.Path)
+		backendURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", agentServiceNamespacedName.Name, agentServiceNamespacedName.Namespace, a2aProtocol.Port)
+
+		endpoints = append(endpoints, KrakendEndpoint{
+			Endpoint:       agentCardPath,
+			OutputEncoding: "no-op",
+			Method:         "GET",
+			Backend: []KrakendBackend{
+				{
+					Host:       []string{backendURL},
+					URLPattern: a2aProtocol.Path + "/.well-known/agent-card.json",
+				},
+			},
+		})
+	}
 
 	// Create an endpoint for each protocol
 	for _, protocol := range agent.Spec.Protocols {
