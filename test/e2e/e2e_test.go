@@ -613,6 +613,79 @@ var _ = Describe("Manager", Ordered, func() {
 					return nil
 				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should return complete agent card schema")
 			})
+
+			It("should create ConfigMap with correct plugin configuration", func() {
+				By("deploying a test agent")
+				cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/crs/mocked_agent.yaml")
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent")
+
+				By("waiting for agent deployment to be ready")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent", "-o", "jsonpath={.status.readyReplicas}")
+					output, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if output == "" || output == "0" {
+						return fmt.Errorf("mocked-agent deployment not ready")
+					}
+					return nil
+				}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent deployment should be ready")
+
+				By("deploying a test agent gateway")
+				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/agent-gateway.yaml")
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent gateway")
+
+				By("waiting for ConfigMap to be created")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "get", "configmap", "agent-gateway-krakend-config")
+					_, err := utils.Run(cmd)
+					return err
+				}, 2*time.Minute, 5*time.Second).Should(Succeed(), "ConfigMap should be created")
+
+				By("extracting and validating ConfigMap JSON content")
+				var configMapJSON string
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "get", "configmap",
+						"agent-gateway-krakend-config",
+						"-o", "jsonpath={.data.krakend\\.json}")
+					output, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if output == "" {
+						return fmt.Errorf("ConfigMap data is empty")
+					}
+					configMapJSON = output
+					return nil
+				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "ConfigMap should contain JSON data")
+
+				By("parsing JSON and validating plugin_names")
+				var krakendConfig map[string]interface{}
+				err = json.Unmarshal([]byte(configMapJSON), &krakendConfig)
+				Expect(err).NotTo(HaveOccurred(), "Should be valid JSON")
+
+				extraConfig, ok := krakendConfig["extra_config"].(map[string]interface{})
+				Expect(ok).To(BeTrue(), "extra_config should be a map")
+
+				pluginHTTPServer, ok := extraConfig["plugin/http-server"].(map[string]interface{})
+				Expect(ok).To(BeTrue(), "plugin/http-server should be a map")
+
+				pluginNames, ok := pluginHTTPServer["name"].([]interface{})
+				Expect(ok).To(BeTrue(), "name should be an array")
+
+				Expect(pluginNames).To(HaveLen(2), "should have exactly 2 plugins")
+				Expect(pluginNames[0]).To(Equal("agentcard-rw"), "first plugin should be agentcard-rw")
+				Expect(pluginNames[1]).To(Equal("openai-a2a"), "second plugin should be openai-a2a")
+
+				By("verifying plugin order is correct (order matters per code comment)")
+				// The order is important: agentcard-rw should come before openai-a2a
+				// because last entry is outermost/first handler
+				Expect(pluginNames[0]).To(Equal("agentcard-rw"))
+				Expect(pluginNames[1]).To(Equal("openai-a2a"))
+			})
 		})
 	})
 })
