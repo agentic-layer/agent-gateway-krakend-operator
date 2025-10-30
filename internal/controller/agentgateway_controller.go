@@ -562,19 +562,29 @@ func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, a
 	// Pre-allocate slice with capacity for protocols + agent card endpoint
 	endpoints := make([]KrakendEndpoint, 0, len(agent.Spec.Protocols)+1)
 
-	// Find the A2A protocol for agent card endpoint
-	var a2aProtocol *agentruntimev1alpha1.AgentProtocol
+	// Find A2A or OpenAI protocol for agent card endpoint (prefer A2A)
+	// Both protocols are A2A-compatible: A2A natively, OpenAI via openai-a2a plugin conversion
+	var agentCardProtocol *agentruntimev1alpha1.AgentProtocol
 	for i := range agent.Spec.Protocols {
 		if agent.Spec.Protocols[i].Type == "A2A" {
-			a2aProtocol = &agent.Spec.Protocols[i]
-			break
+			agentCardProtocol = &agent.Spec.Protocols[i]
+			break // Prefer A2A if available
+		}
+	}
+	// If no A2A, check for OpenAI (A2A-compatible via openai-a2a plugin)
+	if agentCardProtocol == nil {
+		for i := range agent.Spec.Protocols {
+			if agent.Spec.Protocols[i].Type == "OpenAI" {
+				agentCardProtocol = &agent.Spec.Protocols[i]
+				break
+			}
 		}
 	}
 
-	// Create agent card endpoint if A2A protocol exists
-	if a2aProtocol != nil {
-		agentCardPath := fmt.Sprintf("/%s%s/.well-known/agent-card.json", agent.Name, a2aProtocol.Path)
-		backendURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", agentServiceNamespacedName.Name, agentServiceNamespacedName.Namespace, a2aProtocol.Port)
+	// Create agent card endpoint if A2A or OpenAI protocol exists
+	if agentCardProtocol != nil {
+		agentCardPath := fmt.Sprintf("/%s%s/.well-known/agent-card.json", agent.Name, agentCardProtocol.Path)
+		backendURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", agentServiceNamespacedName.Name, agentServiceNamespacedName.Namespace, agentCardProtocol.Port)
 
 		endpoints = append(endpoints, KrakendEndpoint{
 			Endpoint:       agentCardPath,
@@ -583,7 +593,7 @@ func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, a
 			Backend: []KrakendBackend{
 				{
 					Host:       []string{backendURL},
-					URLPattern: a2aProtocol.Path + "/.well-known/agent-card.json",
+					URLPattern: agentCardProtocol.Path + "/.well-known/agent-card.json",
 				},
 			},
 		})

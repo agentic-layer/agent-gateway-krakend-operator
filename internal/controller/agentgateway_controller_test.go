@@ -925,6 +925,56 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(a2aEndpoint.Backend[0].Host[0]).To(Equal("http://agent-with-path-service.default.svc.cluster.local:8080"))
 			Expect(a2aEndpoint.Backend[0].URLPattern).To(Equal("/api/v1"))
 		})
+
+		It("should generate agent card endpoint for OpenAI-only agent", func() {
+			// Create agent with OpenAI protocol only (no A2A)
+			agentOpenAIOnly := &agentruntimev1alpha1.Agent{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "agent-openai-only",
+					Namespace: agentGatewayNamespace,
+				},
+				Spec: agentruntimev1alpha1.AgentSpec{
+					Exposed: true,
+					Protocols: []agentruntimev1alpha1.AgentProtocol{
+						{
+							Name: "openai",
+							Type: "OpenAI",
+							Port: 8080,
+							Path: "/v1",
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, agentOpenAIOnly)).To(Succeed())
+
+			// Create service for this agent
+			service := createTestServiceForAgent("agent-openai-only", agentGatewayNamespace, agentOpenAIOnly.UID)
+			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+
+			// Generate endpoints
+			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentOpenAIOnly)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(endpoints).To(HaveLen(2)) // Agent card endpoint + OpenAI protocol endpoint
+
+			// First endpoint should be agent card with OpenAI path
+			agentCardEndpoint := endpoints[0]
+			Expect(agentCardEndpoint.Endpoint).To(Equal("/agent-openai-only/v1/.well-known/agent-card.json"))
+			Expect(agentCardEndpoint.OutputEncoding).To(Equal("no-op"))
+			Expect(agentCardEndpoint.Method).To(Equal("GET"))
+			Expect(agentCardEndpoint.Backend).To(HaveLen(1))
+			Expect(agentCardEndpoint.Backend[0].Host).To(HaveLen(1))
+			Expect(agentCardEndpoint.Backend[0].Host[0]).To(Equal("http://agent-openai-only-service.default.svc.cluster.local:8080"))
+			Expect(agentCardEndpoint.Backend[0].URLPattern).To(Equal("/v1/.well-known/agent-card.json"))
+
+			// Second endpoint should be OpenAI protocol
+			openAIEndpoint := endpoints[1]
+			Expect(openAIEndpoint.Endpoint).To(Equal("/agent-openai-only/v1"))
+			Expect(openAIEndpoint.Method).To(Equal("GET"))
+			Expect(openAIEndpoint.Backend).To(HaveLen(1))
+			Expect(openAIEndpoint.Backend[0].Host[0]).To(Equal("http://agent-openai-only-service.default.svc.cluster.local:8080"))
+			Expect(openAIEndpoint.Backend[0].URLPattern).To(Equal("/v1"))
+		})
 	})
 
 	Describe("Error scenarios", func() {
