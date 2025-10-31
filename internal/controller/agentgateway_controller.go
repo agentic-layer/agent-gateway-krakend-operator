@@ -562,20 +562,11 @@ func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, a
 	// Pre-allocate slice with capacity for protocols + agent card endpoint
 	endpoints := make([]KrakendEndpoint, 0, len(agent.Spec.Protocols)+1)
 
-	// Find A2A or OpenAI protocol for agent card endpoint (prefer A2A)
-	// Both protocols are A2A-compatible: A2A natively, OpenAI via openai-a2a plugin conversion
-	var agentCardProtocol *agentruntimev1alpha1.AgentProtocol
-	for i := range agent.Spec.Protocols {
-		if agent.Spec.Protocols[i].Type == "A2A" {
-			agentCardProtocol = &agent.Spec.Protocols[i]
-			break // Prefer A2A if available
-		}
-	}
-
-	// Create agent card endpoint if A2A or OpenAI protocol exists
-	if agentCardProtocol != nil {
-		agentCardPath := fmt.Sprintf("/%s%s/.well-known/agent-card.json", agent.Name, agentCardProtocol.Path)
-		backendURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", agentServiceNamespacedName.Name, agentServiceNamespacedName.Namespace, agentCardProtocol.Port)
+	// Create agent card endpoint using agent.Status.Url if available
+	if agent.Status.Url != "" {
+		// Extract the endpoint path from Status.Url (everything before /.well-known/agent-card.json)
+		// Status.Url format: http://{name}.{namespace}.svc.cluster.local:{port}/.well-known/agent-card.json
+		agentCardPath := fmt.Sprintf("/%s/.well-known/agent-card.json", agent.Name)
 
 		endpoints = append(endpoints, KrakendEndpoint{
 			Endpoint:       agentCardPath,
@@ -583,11 +574,15 @@ func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, a
 			Method:         "GET",
 			Backend: []KrakendBackend{
 				{
-					Host:       []string{backendURL},
-					URLPattern: agentCardProtocol.Path + "/.well-known/agent-card.json",
+					Host:       []string{agent.Status.Url},
+					URLPattern: "",
 				},
 			},
 		})
+	} else {
+		logf.FromContext(ctx).Info("Agent Status.Url not populated, skipping agent-card endpoint",
+			"agent", agent.Name,
+			"namespace", agent.Namespace)
 	}
 
 	// Create an endpoint for each protocol

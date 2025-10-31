@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -324,7 +325,7 @@ var _ = Describe("AgentGateway Controller", func() {
 					},
 					Spec: agentruntimev1alpha1.AgentGatewaySpec{
 						Replicas: int32Ptr(3),
-						Timeout:  metav1.Duration{Duration: 30 * time.Second},
+						Timeout:  &metav1.Duration{Duration: 30 * time.Second},
 					},
 				}
 				Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
@@ -786,6 +787,13 @@ var _ = Describe("AgentGateway Controller", func() {
 			agent = createTestAgent("test-agent", agentGatewayNamespace, true)
 			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
 
+			// Fetch the agent to get the latest resourceVersion before updating status
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: agent.Name, Namespace: agent.Namespace}, agent)).To(Succeed())
+
+			// Update agent status separately (status fields can't be set during create)
+			agent.Status.Url = fmt.Sprintf("http://test-agent-service.%s.svc.cluster.local:8080/.well-known/agent-card.json", agentGatewayNamespace)
+			Expect(k8sClient.Status().Update(ctx, agent)).To(Succeed())
+
 			service = createTestServiceForAgent("test-agent", agentGatewayNamespace, agent.UID)
 			Expect(k8sClient.Create(ctx, service)).To(Succeed())
 		})
@@ -816,8 +824,8 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(agentCardEndpoint.Method).To(Equal("GET"))
 			Expect(agentCardEndpoint.Backend).To(HaveLen(1))
 			Expect(agentCardEndpoint.Backend[0].Host).To(HaveLen(1))
-			Expect(agentCardEndpoint.Backend[0].Host[0]).To(Equal("http://test-agent-service.default.svc.cluster.local:8080"))
-			Expect(agentCardEndpoint.Backend[0].URLPattern).To(Equal("/.well-known/agent-card.json"))
+			Expect(agentCardEndpoint.Backend[0].Host[0]).To(Equal("http://test-agent-service.default.svc.cluster.local:8080/.well-known/agent-card.json"))
+			Expect(agentCardEndpoint.Backend[0].URLPattern).To(Equal(""))
 
 			// Second endpoint should be A2A protocol endpoint
 			a2aEndpoint := endpoints[1]
@@ -846,24 +854,31 @@ var _ = Describe("AgentGateway Controller", func() {
 			agentWithProtocols := createTestAgentWithProtocols("multi-protocol-agent", agentGatewayNamespace, true)
 			Expect(k8sClient.Create(ctx, agentWithProtocols)).To(Succeed())
 
+			// Fetch the agent to get the latest resourceVersion before updating status
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: agentWithProtocols.Name, Namespace: agentWithProtocols.Namespace}, agentWithProtocols)).To(Succeed())
+
+			// Update agent status separately (status fields can't be set during create)
+			agentWithProtocols.Status.Url = "http://multi-protocol-agent-service.default.svc.cluster.local:8080/.well-known/agent-card.json"
+			Expect(k8sClient.Status().Update(ctx, agentWithProtocols)).To(Succeed())
+
 			service := createTestServiceForAgent("multi-protocol-agent", agentGatewayNamespace, agentWithProtocols.UID)
 			Expect(k8sClient.Create(ctx, service)).To(Succeed())
 
 			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithProtocols)
 
 			Expect(err).NotTo(HaveOccurred())
-			Expect(endpoints).To(HaveLen(3)) // Agent card endpoint + OpenAI endpoint + A2A endpoint
+			Expect(endpoints).To(HaveLen(3)) // Agent card endpoint + 2 A2A protocol endpoints
 
 			// Check first endpoint (Agent card - should be GET)
 			Expect(endpoints[0].Endpoint).To(Equal("/multi-protocol-agent/.well-known/agent-card.json"))
 			Expect(endpoints[0].Method).To(Equal("GET"))
 			Expect(endpoints[0].Backend).To(HaveLen(1))
-			Expect(endpoints[0].Backend[0].Host[0]).To(Equal("http://multi-protocol-agent-service.default.svc.cluster.local:8080"))
-			Expect(endpoints[0].Backend[0].URLPattern).To(Equal("/.well-known/agent-card.json"))
+			Expect(endpoints[0].Backend[0].Host[0]).To(Equal("http://multi-protocol-agent-service.default.svc.cluster.local:8080/.well-known/agent-card.json"))
+			Expect(endpoints[0].Backend[0].URLPattern).To(Equal(""))
 
-			// Check second endpoint (OpenAI with path - should be GET)
+			// Check second endpoint (A2A with path /api/v1 - should be POST)
 			Expect(endpoints[1].Endpoint).To(Equal("/multi-protocol-agent/api/v1"))
-			Expect(endpoints[1].Method).To(Equal("GET"))
+			Expect(endpoints[1].Method).To(Equal("POST"))
 			Expect(endpoints[1].Backend).To(HaveLen(1))
 			Expect(endpoints[1].Backend[0].Host[0]).To(Equal("http://multi-protocol-agent-service.default.svc.cluster.local:8080"))
 			Expect(endpoints[1].Backend[0].URLPattern).To(Equal("/api/v1"))
@@ -897,6 +912,13 @@ var _ = Describe("AgentGateway Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, agentWithPath)).To(Succeed())
 
+			// Fetch the agent to get the latest resourceVersion before updating status
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: agentWithPath.Name, Namespace: agentWithPath.Namespace}, agentWithPath)).To(Succeed())
+
+			// Update agent status separately (status fields can't be set during create)
+			agentWithPath.Status.Url = "http://agent-with-path-service.default.svc.cluster.local:8080/api/v1/.well-known/agent-card.json"
+			Expect(k8sClient.Status().Update(ctx, agentWithPath)).To(Succeed())
+
 			// Create service for this agent
 			service := createTestServiceForAgent("agent-with-path", agentGatewayNamespace, agentWithPath.UID)
 			Expect(k8sClient.Create(ctx, service)).To(Succeed())
@@ -907,15 +929,15 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(endpoints).To(HaveLen(2)) // Agent card endpoint + A2A protocol endpoint
 
-			// First endpoint should be agent card with path
+			// First endpoint should be agent card (path comes from agent name, not protocol path)
 			agentCardEndpoint := endpoints[0]
-			Expect(agentCardEndpoint.Endpoint).To(Equal("/agent-with-path/api/v1/.well-known/agent-card.json"))
+			Expect(agentCardEndpoint.Endpoint).To(Equal("/agent-with-path/.well-known/agent-card.json"))
 			Expect(agentCardEndpoint.OutputEncoding).To(Equal("no-op"))
 			Expect(agentCardEndpoint.Method).To(Equal("GET"))
 			Expect(agentCardEndpoint.Backend).To(HaveLen(1))
 			Expect(agentCardEndpoint.Backend[0].Host).To(HaveLen(1))
-			Expect(agentCardEndpoint.Backend[0].Host[0]).To(Equal("http://agent-with-path-service.default.svc.cluster.local:8080"))
-			Expect(agentCardEndpoint.Backend[0].URLPattern).To(Equal("/api/v1/.well-known/agent-card.json"))
+			Expect(agentCardEndpoint.Backend[0].Host[0]).To(Equal("http://agent-with-path-service.default.svc.cluster.local:8080/api/v1/.well-known/agent-card.json"))
+			Expect(agentCardEndpoint.Backend[0].URLPattern).To(Equal(""))
 
 			// Second endpoint should be A2A protocol with path
 			a2aEndpoint := endpoints[1]
@@ -1161,6 +1183,13 @@ var _ = Describe("AgentGateway Controller", func() {
 			agent = createTestAgent("test-agent", agentGatewayNamespace, true)
 			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
 
+			// Fetch the agent to get the latest resourceVersion before updating status
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: agent.Name, Namespace: agent.Namespace}, agent)).To(Succeed())
+
+			// Update agent status separately (status fields can't be set during create)
+			agent.Status.Url = fmt.Sprintf("http://test-agent-service.%s.svc.cluster.local:8080/.well-known/agent-card.json", agentGatewayNamespace)
+			Expect(k8sClient.Status().Update(ctx, agent)).To(Succeed())
+
 			service = createTestServiceForAgent("test-agent", agentGatewayNamespace, agent.UID)
 			Expect(k8sClient.Create(ctx, service)).To(Succeed())
 		})
@@ -1219,7 +1248,7 @@ var _ = Describe("AgentGateway Controller", func() {
 
 		It("should handle custom timeout configuration", func() {
 			// Update AgentGateway with custom timeout
-			agentGateway.Spec.Timeout = metav1.Duration{Duration: 45 * time.Second}
+			agentGateway.Spec.Timeout = &metav1.Duration{Duration: 45 * time.Second}
 			Expect(k8sClient.Update(ctx, agentGateway)).To(Succeed())
 
 			result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -1786,8 +1815,8 @@ func createTestAgentWithProtocols(name, namespace string, exposed bool) *agentru
 			Exposed: exposed,
 			Protocols: []agentruntimev1alpha1.AgentProtocol{
 				{
-					Name: "http-api",
-					Type: "OpenAI",
+					Name: "api-v1",
+					Type: "A2A",
 					Port: 8080,
 					Path: "/api/v1",
 				},
