@@ -46,7 +46,7 @@ const metricsRoleBindingName = "agent-gateway-krakend-operator-metrics-binding"
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
 	const agentRuntimeInstallUrl = "https://github.com/agentic-layer/agent-runtime-operator/releases/" +
-		"download/v0.4.5/install.yaml"
+		"download/v0.10.0/install.yaml"
 
 	// Before running the tests, set up the environment by creating the namespace,
 	// enforce the restricted security policy to the namespace, installing CRDs,
@@ -286,7 +286,7 @@ var _ = Describe("Manager", Ordered, func() {
 				cmd := exec.Command("kubectl", "delete", "pod", "test-routing")
 				_, _ = utils.Run(cmd)
 
-				cmd = exec.Command("kubectl", "delete", "pod", "wiremock-config")
+				cmd = exec.Command("kubectl", "delete", "configmap", "mocked-agent-mappings")
 				_, _ = utils.Run(cmd)
 
 				cmd = exec.Command("kubectl", "delete", "agent", "mocked-agent")
@@ -297,9 +297,14 @@ var _ = Describe("Manager", Ordered, func() {
 			})
 
 			It("should deploy an agent and agent gateway and test routing", func() {
-				By("deploying a test agent")
-				cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/crs/mocked_agent.yaml")
+				By("deploying wiremock mappings configmap")
+				cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/crs/wiremock-mappings-configmap.yaml")
 				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy wiremock mappings configmap")
+
+				By("deploying a test agent")
+				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/mocked_agent.yaml")
+				_, err = utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent")
 
 				By("waiting for agent deployment to be ready")
@@ -314,11 +319,6 @@ var _ = Describe("Manager", Ordered, func() {
 					}
 					return nil
 				}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent deployment should be ready")
-
-				By("configuring wiremock with test endpoint")
-				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/wiremock-config.yaml")
-				_, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "Failed to configure wiremock endpoint")
 
 				By("deploying a test agent gateway")
 				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/agent-gateway.yaml")

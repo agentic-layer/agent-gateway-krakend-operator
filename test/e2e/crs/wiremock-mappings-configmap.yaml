@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mocked-agent-mappings
+data:
+  # WireMock mapping file - will be placed in /home/wiremock/mappings/
+  mock-response.json: |
+    {
+      "request": {
+        "method": "POST"
+      },
+      "response": {
+        "status": 200,
+        "body": "This is a mocked response!",
+        "headers": {
+          "Content-Type": "text/plain"
+        }
+      }
+    }
