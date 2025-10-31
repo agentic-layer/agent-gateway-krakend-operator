@@ -571,15 +571,6 @@ func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, a
 			break // Prefer A2A if available
 		}
 	}
-	// If no A2A, check for OpenAI (A2A-compatible via openai-a2a plugin)
-	if agentCardProtocol == nil {
-		for i := range agent.Spec.Protocols {
-			if agent.Spec.Protocols[i].Type == "OpenAI" {
-				agentCardProtocol = &agent.Spec.Protocols[i]
-				break
-			}
-		}
-	}
 
 	// Create agent card endpoint if A2A or OpenAI protocol exists
 	if agentCardProtocol != nil {
