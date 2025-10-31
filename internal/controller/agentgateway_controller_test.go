@@ -324,7 +324,7 @@ var _ = Describe("AgentGateway Controller", func() {
 					},
 					Spec: agentruntimev1alpha1.AgentGatewaySpec{
 						Replicas: int32Ptr(3),
-						Timeout:  metav1.Duration{Duration: 30 * time.Second},
+						Timeout:  &metav1.Duration{Duration: 30 * time.Second},
 					},
 				}
 				Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
@@ -845,7 +845,7 @@ var _ = Describe("AgentGateway Controller", func() {
 
 			// Check first endpoint (OpenAI with path - should be GET)
 			Expect(endpoints[0].Endpoint).To(Equal("/multi-protocol-agent/api/v1"))
-			Expect(endpoints[0].Method).To(Equal("GET"))
+			Expect(endpoints[0].Method).To(Equal("POST"))
 			Expect(endpoints[0].Backend).To(HaveLen(1))
 			Expect(endpoints[0].Backend[0].Host[0]).To(Equal("http://multi-protocol-agent-service.default.svc.cluster.local:8080"))
 			Expect(endpoints[0].Backend[0].URLPattern).To(Equal("/api/v1"))
@@ -1143,7 +1143,7 @@ var _ = Describe("AgentGateway Controller", func() {
 
 		It("should handle custom timeout configuration", func() {
 			// Update AgentGateway with custom timeout
-			agentGateway.Spec.Timeout = metav1.Duration{Duration: 45 * time.Second}
+			agentGateway.Spec.Timeout = &metav1.Duration{Duration: 45 * time.Second}
 			Expect(k8sClient.Update(ctx, agentGateway)).To(Succeed())
 
 			result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -1710,7 +1710,7 @@ func createTestAgentWithProtocols(name, namespace string, exposed bool) *agentru
 			Protocols: []agentruntimev1alpha1.AgentProtocol{
 				{
 					Name: "http-api",
-					Type: "OpenAI",
+					Type: "A2A",
 					Port: 8080,
 					Path: "/api/v1",
 				},

@@ -43,10 +43,22 @@ const metricsServiceName = "agent-gateway-krakend-operator-metrics-service"
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "agent-gateway-krakend-operator-metrics-binding"
 
+// namespace where the agent-runtime is deployed in
+const agentRuntimeNamespace = "agent-runtime-operator-system"
+
+// agentRuntimeWebhookService is the name of the webhook service
+const agentRuntimeWebhookService = "agent-runtime-operator-webhook-service"
+
+// agentRuntimeWebhookMutatingConfiguration is the name of the mutating webhook configuration
+const agentRuntimeWebhookMutatingConfiguration = "agent-runtime-operator-mutating-webhook-configuration"
+
+// agentRuntimeWebhookValidatingConfiguration is the name of the validating webhook configuration
+const agentRuntimeWebhookValidatingConfiguration = "agent-runtime-operator-validating-webhook-configuration"
+
 var _ = Describe("Manager", Ordered, func() {
 	var controllerPodName string
 	const agentRuntimeInstallUrl = "https://github.com/agentic-layer/agent-runtime-operator/releases/" +
-		"download/v0.4.5/install.yaml"
+		"download/v0.9.0/install.yaml"
 
 	// Before running the tests, set up the environment by creating the namespace,
 	// enforce the restricted security policy to the namespace, installing CRDs,
@@ -87,6 +99,8 @@ var _ = Describe("Manager", Ordered, func() {
 		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
 		_, err = utils.Run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+		ensureWebhookServiceReady()
 	})
 
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
@@ -432,6 +446,60 @@ func getMetricsOutput() string {
 	Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
 	Expect(metricsOutput).To(ContainSubstring("< HTTP/1.1 200 OK"))
 	return metricsOutput
+}
+
+func waitForWebhookCaBundle(kind string, name string) {
+	verifyCAInjection := func(g Gomega) {
+		cmd := exec.Command("kubectl", "get",
+			kind,
+			name,
+			"-o", "go-template={{ range .webhooks }}{{ .clientConfig.caBundle }}{{ end }}")
+		mwhOutput, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(len(mwhOutput)).To(BeNumerically(">", 10))
+	}
+	Eventually(verifyCAInjection).Should(Succeed())
+}
+
+func waitForWebhookCaBundleMutating() {
+	waitForWebhookCaBundle("mutatingwebhookconfigurations.admissionregistration.k8s.io", agentRuntimeWebhookMutatingConfiguration)
+}
+func waitForWebhookCaBundleValidating() {
+	waitForWebhookCaBundle("validatingwebhookconfigurations.admissionregistration.k8s.io", agentRuntimeWebhookValidatingConfiguration)
+}
+
+// waitForWebhookServiceReady waits for the webhook service to be ready with endpoints.
+func waitForWebhookServiceReady(g Gomega) {
+	// Check that the webhook service exists and has endpoints
+	cmd := exec.Command("kubectl", "get", "service",
+		agentRuntimeWebhookService, "-n", agentRuntimeNamespace)
+	_, err := utils.Run(cmd)
+	g.Expect(err).NotTo(HaveOccurred())
+
+	// Check that the webhook service has endpoints (meaning pods are ready)
+	cmd = exec.Command("kubectl", "get", "endpoints", agentRuntimeWebhookService,
+		"-n", agentRuntimeNamespace, "-o", "jsonpath={.subsets[*].addresses[*].ip}")
+	output, err := utils.Run(cmd)
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(output).NotTo(BeEmpty(), "Webhook service should have endpoints")
+
+	// Verify that the certificate secret has been created
+	verifyCertManager := func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", "secrets", "webhook-server-cert", "-n", agentRuntimeNamespace)
+		_, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred())
+	}
+	Eventually(verifyCertManager).Should(Succeed())
+
+	waitForWebhookCaBundleMutating()
+	waitForWebhookCaBundleValidating()
+}
+
+// ensureWebhookServiceReady is a helper function that waits for webhook service to be ready
+func ensureWebhookServiceReady() {
+	By("waiting for webhook service to be ready")
+	Eventually(waitForWebhookServiceReady, 2*time.Minute, 5*time.Second).
+		Should(Succeed(), "Webhook service should be ready")
 }
 
 // tokenRequest is a simplified representation of the Kubernetes TokenRequest API response,
