@@ -411,7 +411,7 @@ func (r *AgentGatewayReconciler) createConfigMapForKrakend(ctx context.Context, 
 	templateData := KrakendConfigData{
 		Port:        DefaultGatewayPort,
 		Timeout:     agentGateway.Spec.Timeout.Duration.String(),
-		PluginNames: []string{"openai-a2a"}, // Order matters here
+		PluginNames: []string{"agentcard-rw", "openai-a2a"}, // Order matters here
 		Endpoints:   endpoints,
 	}
 
@@ -559,8 +559,31 @@ func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, a
 		return nil, fmt.Errorf("agent %s has no protocols defined", agent.Name)
 	}
 
-	// Pre-allocate slice with the exact capacity needed
-	endpoints := make([]KrakendEndpoint, 0, len(agent.Spec.Protocols))
+	// Pre-allocate slice with capacity for protocols + agent card endpoint
+	endpoints := make([]KrakendEndpoint, 0, len(agent.Spec.Protocols)+1)
+
+	// Create agent card endpoint using agent.Status.Url if available
+	if agent.Status.Url != "" {
+		// Extract the endpoint path from Status.Url (everything before /.well-known/agent-card.json)
+		// Status.Url format: http://{name}.{namespace}.svc.cluster.local:{port}/.well-known/agent-card.json
+		agentCardPath := fmt.Sprintf("/%s/.well-known/agent-card.json", agent.Name)
+
+		endpoints = append(endpoints, KrakendEndpoint{
+			Endpoint:       agentCardPath,
+			OutputEncoding: "no-op",
+			Method:         "GET",
+			Backend: []KrakendBackend{
+				{
+					Host:       []string{agent.Status.Url},
+					URLPattern: "",
+				},
+			},
+		})
+	} else {
+		logf.FromContext(ctx).Info("Agent Status.Url not populated, skipping agent-card endpoint",
+			"agent", agent.Name,
+			"namespace", agent.Namespace)
+	}
 
 	// Create an endpoint for each protocol
 	for _, protocol := range agent.Spec.Protocols {

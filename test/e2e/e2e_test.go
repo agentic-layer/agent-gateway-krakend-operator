@@ -289,7 +289,19 @@ var _ = Describe("Manager", Ordered, func() {
 				cmd = exec.Command("kubectl", "delete", "pod", "wiremock-config")
 				_, _ = utils.Run(cmd)
 
+				cmd = exec.Command("kubectl", "delete", "pod", "wiremock-config-with-path")
+				_, _ = utils.Run(cmd)
+
+				cmd = exec.Command("kubectl", "delete", "pod", "wiremock-config-openai-only")
+				_, _ = utils.Run(cmd)
+
 				cmd = exec.Command("kubectl", "delete", "agent", "mocked-agent")
+				_, _ = utils.Run(cmd)
+
+				cmd = exec.Command("kubectl", "delete", "agent", "mocked-agent-with-path")
+				_, _ = utils.Run(cmd)
+
+				cmd = exec.Command("kubectl", "delete", "agent", "mocked-agent-openai-only")
 				_, _ = utils.Run(cmd)
 
 				cmd = exec.Command("kubectl", "delete", "agentgateway", "agent-gateway")
@@ -379,9 +391,365 @@ var _ = Describe("Manager", Ordered, func() {
 					return nil
 				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should receive HTTP 200 response")
 			})
+
+			It("should route agent card endpoint requests correctly", func() {
+				deployAgentAndWaitForReady("test/e2e/crs/mocked_agent.yaml", "mocked-agent")
+				configureWiremock("test/e2e/crs/wiremock-config.yaml")
+				deployAgentGatewayAndWaitForReady()
+
+				testAgentCardEndpoint(
+					"http://agent-gateway:10000/mocked-agent/.well-known/agent-card.json",
+					"testing agent card endpoint routing from gateway to agent",
+					func(logOutput string) error {
+						if !strings.Contains(logOutput, `"name":"mocked-agent"`) {
+							return fmt.Errorf("response does not contain expected agent card JSON")
+						}
+						if !strings.Contains(logOutput, `"description":"A test agent for e2e tests"`) {
+							return fmt.Errorf("response does not contain expected agent description")
+						}
+						return nil
+					},
+				)
+			})
+
+			It("should return properly formatted agent card data", func() {
+				By("deploying a test agent")
+				cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/crs/mocked_agent.yaml")
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent")
+
+				By("waiting for agent deployment to be ready")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent", "-o",
+						"jsonpath={.status.readyReplicas}")
+					output, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if output == "" || output == "0" {
+						return fmt.Errorf("mocked-agent deployment not ready")
+					}
+					return nil
+				}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent deployment should be ready")
+
+				By("configuring wiremock with complete agent card")
+				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/wiremock-config.yaml")
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to configure wiremock endpoint")
+
+				By("deploying a test agent gateway")
+				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/agent-gateway.yaml")
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent gateway")
+
+				By("waiting for agent gateway to be ready")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "get", "deployment", "agent-gateway", "-o",
+						"jsonpath={.status.readyReplicas}")
+					output, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if output == "" || output == "0" {
+						return fmt.Errorf("agent gateway deployment not ready yet, status: %s", output)
+					}
+					return nil
+				}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent gateway should be ready")
+
+				By("requesting agent card from gateway")
+				cmd = exec.Command("kubectl", "run", "test-routing", "--restart=Never",
+					"--image=curlimages/curl:latest",
+					"--overrides",
+					`{
+					"spec": {
+						"containers": [{
+							"name": "curl",
+							"image": "curlimages/curl:latest",
+							"command": ["/bin/sh", "-c"],
+							"args": ["curl -v http://agent-gateway:10000/mocked-agent/.well-known/agent-card.json"],
+							"securityContext": {
+								"allowPrivilegeEscalation": false,
+								"capabilities": {
+									"drop": ["ALL"]
+								},
+								"runAsNonRoot": true,
+								"runAsUser": 1000,
+								"seccompProfile": {
+									"type": "RuntimeDefault"
+								}
+							}
+						}]
+					}
+				}`)
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Should successfully request agent card")
+
+				By("validating required schema fields are present")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "logs", "test-routing")
+					logOutput, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+
+					// Validate HTTP 200 response
+					if !strings.Contains(logOutput, "200 OK") {
+						return fmt.Errorf("expected HTTP 200 status code")
+					}
+
+					// Validate required string fields
+					requiredStringFields := []string{
+						`"name":"mocked-agent"`,
+						`"description":"A test agent for e2e tests"`,
+						`"version":"1.0.0"`,
+					}
+					for _, field := range requiredStringFields {
+						if !strings.Contains(logOutput, field) {
+							return fmt.Errorf("missing required field: %s", field)
+						}
+					}
+
+					// Validate capabilities array
+					if !strings.Contains(logOutput, `"capabilities"`) {
+						return fmt.Errorf("missing capabilities field")
+					}
+					if !strings.Contains(logOutput, `"conversation"`) {
+						return fmt.Errorf("capabilities should contain conversation")
+					}
+					if !strings.Contains(logOutput, `"task-execution"`) {
+						return fmt.Errorf("capabilities should contain task-execution")
+					}
+
+					// Validate protocols object
+					if !strings.Contains(logOutput, `"protocols"`) {
+						return fmt.Errorf("missing protocols field")
+					}
+					if !strings.Contains(logOutput, `"a2a"`) {
+						return fmt.Errorf("protocols should contain a2a")
+					}
+
+					// Validate metadata object
+					if !strings.Contains(logOutput, `"metadata"`) {
+						return fmt.Errorf("missing metadata field")
+					}
+					if !strings.Contains(logOutput, `"author":"PAAL Team"`) {
+						return fmt.Errorf("metadata should contain author")
+					}
+					if !strings.Contains(logOutput, `"license":"Apache-2.0"`) {
+						return fmt.Errorf("metadata should contain license")
+					}
+
+					// Validate endpoints array
+					if !strings.Contains(logOutput, `"endpoints"`) {
+						return fmt.Errorf("missing endpoints field")
+					}
+
+					return nil
+				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should return complete agent card schema")
+			})
+
+			It("should create ConfigMap with correct plugin configuration", func() {
+				By("deploying a test agent")
+				cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/crs/mocked_agent.yaml")
+				_, err := utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent")
+
+				By("waiting for agent deployment to be ready")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent", "-o",
+						"jsonpath={.status.readyReplicas}")
+					output, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if output == "" || output == "0" {
+						return fmt.Errorf("mocked-agent deployment not ready")
+					}
+					return nil
+				}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent deployment should be ready")
+
+				By("deploying a test agent gateway")
+				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/agent-gateway.yaml")
+				_, err = utils.Run(cmd)
+				Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent gateway")
+
+				By("waiting for ConfigMap to be created")
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "get", "configmap", "agent-gateway-krakend-config")
+					_, err := utils.Run(cmd)
+					return err
+				}, 2*time.Minute, 5*time.Second).Should(Succeed(), "ConfigMap should be created")
+
+				By("extracting and validating ConfigMap JSON content")
+				var configMapJSON string
+				Eventually(func() error {
+					cmd := exec.Command("kubectl", "get", "configmap",
+						"agent-gateway-krakend-config",
+						"-o", "jsonpath={.data.krakend\\.json}")
+					output, err := utils.Run(cmd)
+					if err != nil {
+						return err
+					}
+					if output == "" {
+						return fmt.Errorf("ConfigMap data is empty")
+					}
+					configMapJSON = output
+					return nil
+				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "ConfigMap should contain JSON data")
+
+				By("parsing JSON and validating plugin_names")
+				var krakendConfig map[string]interface{}
+				err = json.Unmarshal([]byte(configMapJSON), &krakendConfig)
+				Expect(err).NotTo(HaveOccurred(), "Should be valid JSON")
+
+				extraConfig, ok := krakendConfig["extra_config"].(map[string]interface{})
+				Expect(ok).To(BeTrue(), "extra_config should be a map")
+
+				pluginHTTPServer, ok := extraConfig["plugin/http-server"].(map[string]interface{})
+				Expect(ok).To(BeTrue(), "plugin/http-server should be a map")
+
+				pluginNames, ok := pluginHTTPServer["name"].([]interface{})
+				Expect(ok).To(BeTrue(), "name should be an array")
+
+				Expect(pluginNames).To(HaveLen(2), "should have exactly 2 plugins")
+				Expect(pluginNames[0]).To(Equal("agentcard-rw"), "first plugin should be agentcard-rw")
+				Expect(pluginNames[1]).To(Equal("openai-a2a"), "second plugin should be openai-a2a")
+
+				By("verifying plugin order is correct (order matters per code comment)")
+				// The order is important: agentcard-rw should come before openai-a2a
+				// because last entry is outermost/first handler
+				Expect(pluginNames[0]).To(Equal("agentcard-rw"))
+				Expect(pluginNames[1]).To(Equal("openai-a2a"))
+			})
+
+			It("should route agent card requests for agents with protocol paths", func() {
+				deployAgentAndWaitForReady("test/e2e/crs/mocked_agent_with_path.yaml", "mocked-agent-with-path")
+				configureWiremock("test/e2e/crs/wiremock-config-with-path.yaml")
+				deployAgentGatewayAndWaitForReady()
+
+				testAgentCardEndpoint(
+					"http://agent-gateway:10000/mocked-agent-with-path/api/v1/.well-known/agent-card.json",
+					"testing agent card endpoint with protocol path",
+					func(logOutput string) error {
+						if !strings.Contains(logOutput, `"name":"mocked-agent-with-path"`) {
+							return fmt.Errorf("response does not contain expected agent name")
+						}
+						if !strings.Contains(logOutput, `"endpoint":"/api/v1"`) {
+							return fmt.Errorf("response does not contain expected protocol endpoint path")
+						}
+						return nil
+					},
+				)
+			})
 		})
 	})
 })
+
+// deployAgentAndWaitForReady deploys an agent from a YAML file and waits for it to be ready
+func deployAgentAndWaitForReady(agentFile, deploymentName string) {
+	By(fmt.Sprintf("deploying test agent from %s", agentFile))
+	cmd := exec.Command("kubectl", "apply", "-f", agentFile)
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent")
+
+	By(fmt.Sprintf("waiting for %s deployment to be ready", deploymentName))
+	Eventually(func() error {
+		cmd := exec.Command("kubectl", "get", "deployment", deploymentName, "-o",
+			"jsonpath={.status.readyReplicas}")
+		output, err := utils.Run(cmd)
+		if err != nil {
+			return err
+		}
+		if output == "" || output == "0" {
+			return fmt.Errorf("%s deployment not ready", deploymentName)
+		}
+		return nil
+	}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent deployment should be ready")
+}
+
+// configureWiremock applies a wiremock configuration from a YAML file
+func configureWiremock(configFile string) {
+	By(fmt.Sprintf("configuring wiremock from %s", configFile))
+	cmd := exec.Command("kubectl", "apply", "-f", configFile)
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to configure wiremock endpoint")
+}
+
+// deployAgentGatewayAndWaitForReady deploys the agent gateway and waits for it to be ready
+func deployAgentGatewayAndWaitForReady() {
+	By("deploying test agent gateway")
+	cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/crs/agent-gateway.yaml")
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent gateway")
+
+	By("waiting for agent gateway to be ready")
+	Eventually(func() error {
+		cmd := exec.Command("kubectl", "get", "deployment", "agent-gateway", "-o",
+			"jsonpath={.status.readyReplicas}")
+		output, err := utils.Run(cmd)
+		if err != nil {
+			return err
+		}
+		if output == "" || output == "0" {
+			return fmt.Errorf("agent gateway deployment not ready yet, status: %s", output)
+		}
+		return nil
+	}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent gateway should be ready")
+}
+
+// testAgentCardEndpoint tests an agent card endpoint with custom validation
+func testAgentCardEndpoint(curlURL, testDescription string, validateResponse func(string) error) {
+	By(testDescription)
+	cmd := exec.Command("kubectl", "run", "test-routing", "--restart=Never",
+		"--image=curlimages/curl:latest",
+		"--overrides",
+		fmt.Sprintf(`{
+			"spec": {
+				"containers": [{
+					"name": "curl",
+					"image": "curlimages/curl:latest",
+					"command": ["/bin/sh", "-c"],
+					"args": ["curl -v %s"],
+					"securityContext": {
+						"allowPrivilegeEscalation": false,
+						"capabilities": {
+							"drop": ["ALL"]
+						},
+						"runAsNonRoot": true,
+						"runAsUser": 1000,
+						"seccompProfile": {
+							"type": "RuntimeDefault"
+						}
+					}
+				}]
+			}
+		}`, curlURL))
+	_, err := utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Gateway should successfully route to agent card endpoint")
+
+	By("checking that the response contains HTTP 200 status")
+	Eventually(func() error {
+		cmd := exec.Command("kubectl", "logs", "test-routing")
+		logOutput, err := utils.Run(cmd)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(logOutput, "200 OK") {
+			return fmt.Errorf("expected HTTP 200 status code, got: %s", logOutput)
+		}
+		return nil
+	}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should receive HTTP 200 response")
+
+	By("verifying response contains valid agent card JSON")
+	Eventually(func() error {
+		cmd := exec.Command("kubectl", "logs", "test-routing")
+		logOutput, err := utils.Run(cmd)
+		if err != nil {
+			return err
+		}
+		return validateResponse(logOutput)
+	}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should receive valid agent card JSON response")
+}
 
 // serviceAccountToken returns a token for the specified service account in the given namespace.
 // It uses the Kubernetes TokenRequest API to generate a token by directly sending a request

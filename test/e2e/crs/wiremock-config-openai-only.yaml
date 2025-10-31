@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: wiremock-config
+  name: wiremock-config-openai-only
 spec:
   restartPolicy: Never
   containers:
@@ -10,51 +10,52 @@ spec:
     command: ["/bin/sh", "-c"]
     args:
     - |
-      curl -X POST 'http://mocked-agent:8080/__admin/mappings' \
+      curl -X POST 'http://mocked-agent-openai-only:8080/__admin/mappings' \
       -H 'Content-Type: application/json' \
       -d '{
         "request": {
-          "method": "POST"
+          "method": "GET",
+          "urlPath": "/v1"
         },
         "response": {
           "status": 200,
-          "body": "This is a mocked response!",
+          "body": "This is a mocked OpenAI response!",
           "headers": {
             "Content-Type": "text/plain"
           }
         }
       }'
 
-      curl -X POST 'http://mocked-agent:8080/__admin/mappings' \
+      curl -X POST 'http://mocked-agent-openai-only:8080/__admin/mappings' \
       -H 'Content-Type: application/json' \
       -d '{
         "request": {
           "method": "GET",
-          "urlPath": "/.well-known/agent-card.json"
+          "urlPath": "/v1/.well-known/agent-card.json"
         },
         "response": {
           "status": 200,
           "jsonBody": {
-            "name": "mocked-agent",
-            "description": "A test agent for e2e tests",
+            "name": "mocked-agent-openai-only",
+            "description": "Test OpenAI-only agent with agent card",
             "version": "1.0.0",
-            "capabilities": ["conversation", "task-execution"],
+            "capabilities": ["conversation", "chat-completion"],
             "protocols": {
-              "a2a": {
-                "endpoint": "/",
-                "methods": ["POST"]
+              "openai": {
+                "endpoint": "/v1",
+                "methods": ["GET"]
               }
             },
             "metadata": {
               "author": "PAAL Team",
               "license": "Apache-2.0",
-              "tags": ["test", "e2e", "mocked"]
+              "tags": ["test", "e2e", "openai"]
             },
             "endpoints": [
               {
-                "path": "/",
-                "method": "POST",
-                "description": "Main agent endpoint"
+                "path": "/v1",
+                "method": "GET",
+                "description": "OpenAI endpoint"
               }
             ]
           },
