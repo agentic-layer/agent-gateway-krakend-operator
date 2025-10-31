@@ -400,7 +400,8 @@ var _ = Describe("Manager", Ordered, func() {
 
 				By("waiting for agent deployment to be ready")
 				Eventually(func() error {
-					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent", "-o", "jsonpath={.status.readyReplicas}")
+					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent", "-o",
+						"jsonpath={.status.readyReplicas}")
 					output, err := utils.Run(cmd)
 					if err != nil {
 						return err
@@ -423,7 +424,8 @@ var _ = Describe("Manager", Ordered, func() {
 
 				By("waiting for agent gateway to be ready")
 				Eventually(func() error {
-					cmd := exec.Command("kubectl", "get", "deployment", "agent-gateway", "-o", "jsonpath={.status.readyReplicas}")
+					cmd := exec.Command("kubectl", "get", "deployment", "agent-gateway", "-o",
+						"jsonpath={.status.readyReplicas}")
 					output, err := utils.Run(cmd)
 					if err != nil {
 						return err
@@ -460,7 +462,8 @@ var _ = Describe("Manager", Ordered, func() {
 					}
 				}`)
 				_, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "Gateway should successfully route to agent card endpoint")
+				Expect(err).NotTo(HaveOccurred(),
+					"Gateway should successfully route to agent card endpoint")
 
 				By("checking that the response contains HTTP 200 status")
 				Eventually(func() error {
@@ -473,7 +476,8 @@ var _ = Describe("Manager", Ordered, func() {
 						return fmt.Errorf("expected HTTP 200 status code, got: %s", logOutput)
 					}
 					return nil
-				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should receive HTTP 200 response")
+				}, 1*time.Minute, 5*time.Second).Should(Succeed(),
+					"Should receive HTTP 200 response")
 
 				By("verifying response contains valid agent card JSON")
 				Eventually(func() error {
@@ -489,7 +493,8 @@ var _ = Describe("Manager", Ordered, func() {
 						return fmt.Errorf("response does not contain expected agent description")
 					}
 					return nil
-				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should receive valid agent card JSON response")
+				}, 1*time.Minute, 5*time.Second).Should(Succeed(),
+					"Should receive valid agent card JSON response")
 			})
 
 			It("should return properly formatted agent card data", func() {
@@ -500,7 +505,8 @@ var _ = Describe("Manager", Ordered, func() {
 
 				By("waiting for agent deployment to be ready")
 				Eventually(func() error {
-					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent", "-o", "jsonpath={.status.readyReplicas}")
+					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent", "-o",
+						"jsonpath={.status.readyReplicas}")
 					output, err := utils.Run(cmd)
 					if err != nil {
 						return err
@@ -523,7 +529,8 @@ var _ = Describe("Manager", Ordered, func() {
 
 				By("waiting for agent gateway to be ready")
 				Eventually(func() error {
-					cmd := exec.Command("kubectl", "get", "deployment", "agent-gateway", "-o", "jsonpath={.status.readyReplicas}")
+					cmd := exec.Command("kubectl", "get", "deployment", "agent-gateway", "-o",
+						"jsonpath={.status.readyReplicas}")
 					output, err := utils.Run(cmd)
 					if err != nil {
 						return err
@@ -634,7 +641,8 @@ var _ = Describe("Manager", Ordered, func() {
 
 				By("waiting for agent deployment to be ready")
 				Eventually(func() error {
-					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent", "-o", "jsonpath={.status.readyReplicas}")
+					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent", "-o",
+						"jsonpath={.status.readyReplicas}")
 					output, err := utils.Run(cmd)
 					if err != nil {
 						return err
@@ -707,7 +715,8 @@ var _ = Describe("Manager", Ordered, func() {
 
 				By("waiting for agent deployment to be ready")
 				Eventually(func() error {
-					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent-with-path", "-o", "jsonpath={.status.readyReplicas}")
+					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent-with-path", "-o",
+						"jsonpath={.status.readyReplicas}")
 					output, err := utils.Run(cmd)
 					if err != nil {
 						return err
@@ -730,7 +739,8 @@ var _ = Describe("Manager", Ordered, func() {
 
 				By("waiting for agent gateway to be ready")
 				Eventually(func() error {
-					cmd := exec.Command("kubectl", "get", "deployment", "agent-gateway", "-o", "jsonpath={.status.readyReplicas}")
+					cmd := exec.Command("kubectl", "get", "deployment", "agent-gateway", "-o",
+						"jsonpath={.status.readyReplicas}")
 					output, err := utils.Run(cmd)
 					if err != nil {
 						return err
@@ -796,7 +806,8 @@ var _ = Describe("Manager", Ordered, func() {
 						return fmt.Errorf("response does not contain expected protocol endpoint path")
 					}
 					return nil
-				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should receive valid agent card JSON with path information")
+				}, 1*time.Minute, 5*time.Second).Should(Succeed(),
+					"Should receive valid agent card JSON with path information")
 			})
 
 			It("should create agent card endpoint for OpenAI-only agents", func() {
@@ -807,7 +818,8 @@ var _ = Describe("Manager", Ordered, func() {
 
 				By("waiting for agent deployment to be ready")
 				Eventually(func() error {
-					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent-openai-only", "-o", "jsonpath={.status.readyReplicas}")
+					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent-openai-only", "-o",
+						"jsonpath={.status.readyReplicas}")
 					output, err := utils.Run(cmd)
 					if err != nil {
 						return err
@@ -830,7 +842,8 @@ var _ = Describe("Manager", Ordered, func() {
 
 				By("waiting for agent gateway to be ready")
 				Eventually(func() error {
-					cmd := exec.Command("kubectl", "get", "deployment", "agent-gateway", "-o", "jsonpath={.status.readyReplicas}")
+					cmd := exec.Command("kubectl", "get", "deployment", "agent-gateway", "-o",
+						"jsonpath={.status.readyReplicas}")
 					output, err := utils.Run(cmd)
 					if err != nil {
 						return err
@@ -896,7 +909,8 @@ var _ = Describe("Manager", Ordered, func() {
 						return fmt.Errorf("response does not contain expected OpenAI capabilities")
 					}
 					return nil
-				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should receive valid OpenAI agent card JSON")
+				}, 1*time.Minute, 5*time.Second).Should(Succeed(),
+					"Should receive valid OpenAI agent card JSON")
 
 				By("validating ConfigMap contains agent card endpoint")
 				var configMapJSON string
