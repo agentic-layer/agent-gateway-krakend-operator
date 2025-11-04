@@ -874,19 +874,6 @@ var _ = Describe("AgentGateway Controller", func() {
 				agent := createTestAgent("test-agent", agentGatewayNamespace, true)
 				Expect(k8sClient.Create(ctx, agent)).To(Succeed())
 			})
-
-			It("should return error when agent service is not found", func() {
-				result, err := reconciler.Reconcile(ctx, ctrl.Request{
-					NamespacedName: types.NamespacedName{
-						Name:      agentGatewayName,
-						Namespace: agentGatewayNamespace,
-					},
-				})
-
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("no service found owned by agent"))
-				Expect(result).To(Equal(ctrl.Result{}))
-			})
 		})
 
 		Context("when getExposedAgents fails", func() {
@@ -977,25 +964,6 @@ var _ = Describe("AgentGateway Controller", func() {
 				// Create AgentGateway
 				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 				Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
-			})
-
-			It("should return error when agent service is missing", func() {
-				// Create exposed Agent but no corresponding service
-				agent := createTestAgent("test-agent", agentGatewayNamespace, true)
-				Expect(k8sClient.Create(ctx, agent)).To(Succeed())
-
-				// Don't create a service for this agent - this should cause reconciliation to fail
-
-				result, err := reconciler.Reconcile(ctx, ctrl.Request{
-					NamespacedName: types.NamespacedName{
-						Name:      agentGatewayName,
-						Namespace: agentGatewayNamespace,
-					},
-				})
-
-				Expect(err).To(HaveOccurred())
-				Expect(err.Error()).To(ContainSubstring("no service found owned by agent"))
-				Expect(result).To(Equal(ctrl.Result{}))
 			})
 		})
 

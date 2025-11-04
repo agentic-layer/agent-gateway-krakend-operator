@@ -398,14 +398,17 @@ func (r *AgentGatewayReconciler) createServiceForAgentGateway(agentGateway *agen
 
 // createConfigMapForKrakend creates a ConfigMap with KrakenD configuration
 func (r *AgentGatewayReconciler) createConfigMapForKrakend(ctx context.Context, agentGateway *agentruntimev1alpha1.AgentGateway, configMapName string, exposedAgents []*agentruntimev1alpha1.Agent) (*corev1.ConfigMap, string, error) {
+	log := logf.FromContext(ctx)
+
 	// Generate endpoints for all exposed agents
 	var endpoints []KrakendEndpoint
 	for _, agent := range exposedAgents {
 		agentEndpoints, err := r.generateEndpointForAgent(ctx, agent)
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to generate endpoints for agent %s: %w", agent.Name, err)
+			log.Error(err, "failed to generate endpoints for agent", "agent.name", agent.Name)
+		} else {
+			endpoints = append(endpoints, agentEndpoints...)
 		}
-		endpoints = append(endpoints, agentEndpoints...)
 	}
 
 	templateData := KrakendConfigData{
