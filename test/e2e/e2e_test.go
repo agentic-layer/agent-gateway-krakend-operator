@@ -300,9 +300,6 @@ var _ = Describe("Manager", Ordered, func() {
 				cmd := exec.Command("kubectl", "delete", "pod", "test-routing")
 				_, _ = utils.Run(cmd)
 
-				cmd = exec.Command("kubectl", "delete", "pod", "wiremock-config")
-				_, _ = utils.Run(cmd)
-
 				cmd = exec.Command("kubectl", "delete", "agent", "mocked-agent")
 				_, _ = utils.Run(cmd)
 
@@ -312,7 +309,7 @@ var _ = Describe("Manager", Ordered, func() {
 
 			It("should deploy an agent and agent gateway and test routing", func() {
 				By("deploying a test agent")
-				cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/crs/mocked_agent.yaml")
+				cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/crs/mocked-agent.yaml")
 				_, err := utils.Run(cmd)
 				Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent")
 
@@ -328,11 +325,6 @@ var _ = Describe("Manager", Ordered, func() {
 					}
 					return nil
 				}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent deployment should be ready")
-
-				By("configuring wiremock with test endpoint")
-				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/wiremock-config.yaml")
-				_, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "Failed to configure wiremock endpoint")
 
 				By("deploying a test agent gateway")
 				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/agent-gateway.yaml")
@@ -362,7 +354,25 @@ var _ = Describe("Manager", Ordered, func() {
 							"name": "curl",
 							"image": "curlimages/curl:latest",
 							"command": ["/bin/sh", "-c"],
-							"args": ["curl -XPOST -v http://agent-gateway:10000/mocked-agent"],
+							"args": ["curl -XPOST -v -H "Content-Type: application/json" http://agent-gateway:10000/mocked-agent" -d '{
+								  "jsonrpc": "2.0",
+								  "id": 1,
+								  "method": "message/send",
+								  "params": {
+									"message": {
+									  "role": "user",
+									  "parts": [
+										{
+										  "kind": "text",
+										  "text": "Message to echo back"
+										}
+									  ],
+									  "messageId": "9229e770-767c-417b-a0b0-f0741243c589",
+									  "contextId": "abcd1234-5678-90ab-cdef-1234567890ab"
+									},
+									"metadata": {}
+								  }
+								}'],
 							"securityContext": {
 								"allowPrivilegeEscalation": false,
 								"capabilities": {

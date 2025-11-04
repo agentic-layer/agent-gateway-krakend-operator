@@ -2,21 +2,10 @@ apiVersion: runtime.agentic-layer.ai/v1alpha1
 kind: AgentGateway
 metadata:
   labels:
-    app.kubernetes.io/name: agent-runtime-operator
+    app.kubernetes.io/name: agent-gateway-krakend-operator
     app.kubernetes.io/managed-by: kustomize
   name: agent-gateway
 spec:
   agentGatewayClassName: krakend
-  replicas: 2
-  timeout: "30000ms"
-
----
-# Minimal AgentGateway configuration
-apiVersion: runtime.agentic-layer.ai/v1alpha1
-kind: AgentGateway
-metadata:
-  labels:
-    app.kubernetes.io/name: agent-runtime-operator
-    app.kubernetes.io/managed-by: kustomize
-  name: minimal-gateway
-spec:
+  replicas: 1
+  timeout: 30s
