@@ -3,8 +3,5 @@ kind: Agent
 metadata:
   name: mocked-agent
 spec:
-  image: ghcr.io/agentic-layer/mock-agent:0.5
-  protocols:
-    - type: A2A
-      port: 8080
+  image: ghcr.io/agentic-layer/mock-agent:0.6
   exposed: true

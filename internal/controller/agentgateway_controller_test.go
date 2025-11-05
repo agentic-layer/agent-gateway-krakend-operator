@@ -707,12 +707,10 @@ var _ = Describe("AgentGateway Controller", func() {
 			agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 			Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
 
-			// Create exposed Agent with service
+			// Create exposed Agent
 			agent := createTestAgent("test-agent", agentGatewayNamespace, true)
 			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
-
-			service := createTestServiceForAgent("test-agent", agentGatewayNamespace, agent.UID)
-			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+			setAgentUrl(agent, "http://test-agent-service.default.svc.cluster.local:8080/test-agent/.well-known/agent-card.json")
 		})
 
 		It("should create ConfigMap with agent endpoints", func() {
@@ -740,16 +738,13 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(configMap.Data).To(HaveKey("krakend.json"))
 			krakendConfig := configMap.Data["krakend.json"]
 			Expect(krakendConfig).To(ContainSubstring("/test-agent"))
-			Expect(krakendConfig).To(ContainSubstring("test-agent-service"))
+			Expect(krakendConfig).To(ContainSubstring("http://test-agent-service.default.svc.cluster.local:8080"))
 		})
 
 		It("should only include exposed agents in configuration", func() {
 			// Create a non-exposed agent
 			hiddenAgent := createTestAgent("hidden-agent", agentGatewayNamespace, false)
 			Expect(k8sClient.Create(ctx, hiddenAgent)).To(Succeed())
-
-			hiddenService := createTestServiceForAgent("hidden-agent", agentGatewayNamespace, hiddenAgent.UID)
-			Expect(k8sClient.Create(ctx, hiddenService)).To(Succeed())
 
 			result, err := reconciler.Reconcile(ctx, ctrl.Request{
 				NamespacedName: types.NamespacedName{
@@ -780,30 +775,24 @@ var _ = Describe("AgentGateway Controller", func() {
 
 	Describe("generateEndpointForAgent", func() {
 		var agent *agentruntimev1alpha1.Agent
-		var service *corev1.Service
 
 		BeforeEach(func() {
 			agent = createTestAgent("test-agent", agentGatewayNamespace, true)
 			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
-
-			service = createTestServiceForAgent("test-agent", agentGatewayNamespace, agent.UID)
-			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+			setAgentUrl(agent, "http://test-agent-service.default.svc.cluster.local:8080/.well-known/agent-card.json")
 		})
 
-		It("should return error for agent without protocols", func() {
-			agentWithoutProtocols := createTestAgentWithoutProtocols("no-protocols-agent", agentGatewayNamespace, true)
-			Expect(k8sClient.Create(ctx, agentWithoutProtocols)).To(Succeed())
+		It("should return empty endpoints for agent without URL", func() {
+			agentWithoutUrl := createTestAgent("no-url-agent", agentGatewayNamespace, true)
+			Expect(k8sClient.Create(ctx, agentWithoutUrl)).To(Succeed())
 
-			service := createTestServiceForAgent("no-protocols-agent", agentGatewayNamespace, agentWithoutProtocols.UID)
-			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithoutUrl)
 
-			_, err := reconciler.generateEndpointForAgent(ctx, agentWithoutProtocols)
-
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("has no protocols defined"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(endpoints).To(BeEmpty())
 		})
 
-		It("should generate correct endpoint configuration for agent with single protocol", func() {
+		It("should generate correct endpoint configuration for agent with URL", func() {
 			endpoints, err := reconciler.generateEndpointForAgent(ctx, agent)
 
 			Expect(err).NotTo(HaveOccurred())
@@ -816,66 +805,46 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(endpoint.Backend).To(HaveLen(1))
 			Expect(endpoint.Backend[0].Host).To(HaveLen(1))
 			Expect(endpoint.Backend[0].Host[0]).To(Equal("http://test-agent-service.default.svc.cluster.local:8080"))
-			Expect(endpoint.Backend[0].URLPattern).To(Equal("")) // Should be empty for protocol without path
+			Expect(endpoint.Backend[0].URLPattern).To(Equal(""))
 		})
 
-		It("should return error when service is missing", func() {
-			// Create agent without service
-			agentWithoutService := createTestAgent("no-service-agent", agentGatewayNamespace, true)
-			Expect(k8sClient.Create(ctx, agentWithoutService)).To(Succeed())
+		It("should use custom URL from agent status and strip agent-card suffix", func() {
+			// Create agent with custom URL that includes a path and agent-card suffix
+			customUrl := "http://custom-backend.example.com:9000/api/v1/.well-known/agent-card.json"
+			agentWithCustomUrl := createTestAgent("custom-agent", agentGatewayNamespace, true)
+			Expect(k8sClient.Create(ctx, agentWithCustomUrl)).To(Succeed())
+			setAgentUrl(agentWithCustomUrl, customUrl)
 
-			_, err := reconciler.generateEndpointForAgent(ctx, agentWithoutService)
-
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("no service found owned by agent"))
-		})
-
-		It("should generate multiple endpoints for agent with protocols", func() {
-			// Create agent with multiple protocols
-			agentWithProtocols := createTestAgentWithProtocols("multi-protocol-agent", agentGatewayNamespace, true)
-			Expect(k8sClient.Create(ctx, agentWithProtocols)).To(Succeed())
-
-			service := createTestServiceForAgent("multi-protocol-agent", agentGatewayNamespace, agentWithProtocols.UID)
-			Expect(k8sClient.Create(ctx, service)).To(Succeed())
-
-			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithProtocols)
+			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithCustomUrl)
 
 			Expect(err).NotTo(HaveOccurred())
-			Expect(endpoints).To(HaveLen(2))
+			Expect(endpoints).To(HaveLen(1))
 
-			// Check first endpoint (OpenAI with path - should be GET)
-			Expect(endpoints[0].Endpoint).To(Equal("/multi-protocol-agent/api/v1"))
-			Expect(endpoints[0].Method).To(Equal("POST"))
-			Expect(endpoints[0].Backend).To(HaveLen(1))
-			Expect(endpoints[0].Backend[0].Host[0]).To(Equal("http://multi-protocol-agent-service.default.svc.cluster.local:8080"))
-			Expect(endpoints[0].Backend[0].URLPattern).To(Equal("/api/v1"))
+			endpoint := endpoints[0]
+			Expect(endpoint.Endpoint).To(Equal("/custom-agent"))
+			Expect(endpoint.Backend[0].Host[0]).To(Equal("http://custom-backend.example.com:9000"))
+			Expect(endpoint.Backend[0].URLPattern).To(Equal("/api/v1"))
+		})
 
-			// Check second endpoint (A2A without path - should be POST)
-			Expect(endpoints[1].Endpoint).To(Equal("/multi-protocol-agent"))
-			Expect(endpoints[1].Method).To(Equal("POST"))
-			Expect(endpoints[1].Backend).To(HaveLen(1))
-			Expect(endpoints[1].Backend[0].Host[0]).To(Equal("http://multi-protocol-agent-service.default.svc.cluster.local:8080"))
-			Expect(endpoints[1].Backend[0].URLPattern).To(Equal(""))
+		It("should correctly parse URL with only agent-card suffix", func() {
+			// Create agent with URL that has only the agent-card suffix
+			noPathUrl := "http://backend.example.com:8080/.well-known/agent-card.json"
+			agentWithNoPath := createTestAgent("no-path-agent", agentGatewayNamespace, true)
+			Expect(k8sClient.Create(ctx, agentWithNoPath)).To(Succeed())
+			setAgentUrl(agentWithNoPath, noPathUrl)
+
+			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithNoPath)
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(endpoints).To(HaveLen(1))
+
+			endpoint := endpoints[0]
+			Expect(endpoint.Backend[0].Host[0]).To(Equal("http://backend.example.com:8080"))
+			Expect(endpoint.Backend[0].URLPattern).To(Equal(""))
 		})
 	})
 
 	Describe("Error scenarios", func() {
-		Context("when agent service is missing", func() {
-			BeforeEach(func() {
-				// Create single AgentGatewayClass with default annotation and correct controller
-				agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
-				Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
-
-				// Create AgentGateway
-				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
-				Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
-
-				// Create exposed Agent but no service
-				agent := createTestAgent("test-agent", agentGatewayNamespace, true)
-				Expect(k8sClient.Create(ctx, agent)).To(Succeed())
-			})
-		})
-
 		Context("when getExposedAgents fails", func() {
 			It("should handle listing error gracefully", func() {
 				// Create single AgentGatewayClass with default annotation and correct controller
@@ -1045,7 +1014,6 @@ var _ = Describe("AgentGateway Controller", func() {
 		var (
 			agentGateway *agentruntimev1alpha1.AgentGateway
 			agent        *agentruntimev1alpha1.Agent
-			service      *corev1.Service
 		)
 
 		BeforeEach(func() {
@@ -1060,9 +1028,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			// Create exposed Agent
 			agent = createTestAgent("test-agent", agentGatewayNamespace, true)
 			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
-
-			service = createTestServiceForAgent("test-agent", agentGatewayNamespace, agent.UID)
-			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+			setAgentUrl(agent, "http://test-agent-service.default.svc.cluster.local:8080/.well-known/agent-card.json")
 		})
 
 		It("should generate valid KrakenD JSON configuration", func() {
@@ -1177,7 +1143,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			hosts := backend["host"].([]interface{})
 
 			Expect(hosts[0]).To(Equal("http://test-agent-service.default.svc.cluster.local:8080"))
-			Expect(backend["url_pattern"]).To(Equal("")) // Should be empty for pass-through
+			Expect(backend["url_pattern"]).To(Equal("")) // Empty path is valid
 		})
 	})
 
@@ -1323,9 +1289,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			// Add a new exposed agent
 			agent := createTestAgent("new-agent", agentGatewayNamespace, true)
 			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
-
-			service := createTestServiceForAgent("new-agent", agentGatewayNamespace, agent.UID)
-			Expect(k8sClient.Create(ctx, service)).To(Succeed())
+			setAgentUrl(agent, "http://new-agent-service.default.svc.cluster.local:8080/.well-known/agent-card.json")
 
 			// Reconcile again
 			result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -1619,78 +1583,14 @@ func createTestAgent(name, namespace string, exposed bool) *agentruntimev1alpha1
 		},
 		Spec: agentruntimev1alpha1.AgentSpec{
 			Exposed: exposed,
-			Protocols: []agentruntimev1alpha1.AgentProtocol{
-				{
-					Name: "default",
-					Type: "A2A",
-					Port: 8080,
-				},
-			},
 		},
 	}
 }
 
-func createTestAgentWithoutProtocols(name, namespace string, exposed bool) *agentruntimev1alpha1.Agent {
-	return &agentruntimev1alpha1.Agent{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Spec: agentruntimev1alpha1.AgentSpec{
-			Exposed: exposed,
-			// No protocols defined
-		},
-	}
-}
-
-func createTestServiceForAgent(name, namespace string, agentUID types.UID) *corev1.Service {
-	return &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name + "-service",
-			Namespace: namespace,
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion: "runtime.agentic-layer.ai/v1alpha1",
-					Kind:       "Agent",
-					Name:       name,
-					UID:        agentUID,
-				},
-			},
-		},
-		Spec: corev1.ServiceSpec{
-			Ports: []corev1.ServicePort{
-				{
-					Port: 8080,
-				},
-			},
-		},
-	}
-}
-
-func createTestAgentWithProtocols(name, namespace string, exposed bool) *agentruntimev1alpha1.Agent {
-	return &agentruntimev1alpha1.Agent{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Spec: agentruntimev1alpha1.AgentSpec{
-			Exposed: exposed,
-			Protocols: []agentruntimev1alpha1.AgentProtocol{
-				{
-					Name: "http-api",
-					Type: "A2A",
-					Port: 8080,
-					Path: "/api/v1",
-				},
-				{
-					Name: "default",
-					Type: "A2A",
-					Port: 8080,
-					// Path is empty, should use /{agentName}
-				},
-			},
-		},
-	}
+// setAgentUrl updates the agent's status URL
+func setAgentUrl(agent *agentruntimev1alpha1.Agent, url string) {
+	agent.Status.Url = url
+	Expect(k8sClient.Status().Update(ctx, agent)).To(Succeed())
 }
 
 func cleanupAllResources(ctx context.Context) {

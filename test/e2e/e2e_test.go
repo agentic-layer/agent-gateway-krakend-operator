@@ -345,50 +345,9 @@ var _ = Describe("Manager", Ordered, func() {
 				}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent gateway should be ready")
 
 				By("testing routing from gateway to agent")
-				cmd = exec.Command("kubectl", "run", "test-routing", "--restart=Never",
-					"--image=curlimages/curl:latest",
-					"--overrides",
-					`{
-					"spec": {
-						"containers": [{
-							"name": "curl",
-							"image": "curlimages/curl:latest",
-							"command": ["/bin/sh", "-c"],
-							"args": ["curl -XPOST -v -H "Content-Type: application/json" http://agent-gateway:10000/mocked-agent" -d '{
-								  "jsonrpc": "2.0",
-								  "id": 1,
-								  "method": "message/send",
-								  "params": {
-									"message": {
-									  "role": "user",
-									  "parts": [
-										{
-										  "kind": "text",
-										  "text": "Message to echo back"
-										}
-									  ],
-									  "messageId": "9229e770-767c-417b-a0b0-f0741243c589",
-									  "contextId": "abcd1234-5678-90ab-cdef-1234567890ab"
-									},
-									"metadata": {}
-								  }
-								}'],
-							"securityContext": {
-								"allowPrivilegeEscalation": false,
-								"capabilities": {
-									"drop": ["ALL"]
-								},
-								"runAsNonRoot": true,
-								"runAsUser": 1000,
-								"seccompProfile": {
-									"type": "RuntimeDefault"
-								}
-							}
-						}]
-					}
-				}`)
+				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/curl-routing-test.yaml")
 				_, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "Gateway should successfully route to agent")
+				Expect(err).NotTo(HaveOccurred(), "Failed to create routing test pod")
 
 				By("checking that the response contains HTTP 200 status")
 				Eventually(func() error {
@@ -472,10 +431,16 @@ func waitForWebhookCaBundle(kind string, name string) {
 }
 
 func waitForWebhookCaBundleMutating() {
-	waitForWebhookCaBundle("mutatingwebhookconfigurations.admissionregistration.k8s.io", agentRuntimeWebhookMutatingConfiguration)
+	waitForWebhookCaBundle(
+		"mutatingwebhookconfigurations.admissionregistration.k8s.io",
+		agentRuntimeWebhookMutatingConfiguration,
+	)
 }
 func waitForWebhookCaBundleValidating() {
-	waitForWebhookCaBundle("validatingwebhookconfigurations.admissionregistration.k8s.io", agentRuntimeWebhookValidatingConfiguration)
+	waitForWebhookCaBundle(
+		"validatingwebhookconfigurations.admissionregistration.k8s.io",
+		agentRuntimeWebhookValidatingConfiguration,
+	)
 }
 
 // waitForWebhookServiceReady waits for the webhook service to be ready with endpoints.
