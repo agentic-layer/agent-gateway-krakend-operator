@@ -17,3 +17,18 @@ data:
         }
       }
     }
+  # Agent card endpoint for readiness probe
+  agent-card.json: |
+    {
+      "request": {
+        "method": "GET",
+        "urlPath": "/.well-known/agent-card.json"
+      },
+      "response": {
+        "status": 200,
+        "body": "{\"name\":\"mocked-agent\",\"description\":\"Mocked agent for testing\"}",
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    }
