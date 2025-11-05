@@ -21,12 +21,35 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
 	"github.com/agentic-layer/agent-gateway-krakend-operator/test/utils"
 )
+
+// namespace where the project is deployed in
+const namespace = "agent-gateway-krakend-operator-system"
+
+// namespace where the agent-runtime is deployed in
+const agentRuntimeNamespace = "agent-runtime-operator-system"
+
+// agentRuntimeWebhookServiceName is the name of the webhook service
+const agentRuntimeWebhookServiceName = "agent-runtime-operator-webhook-service"
+
+// agentRuntimeWebhookMutatingConfiguration is the name of the mutating webhook configuration
+const agentRuntimeWebhookMutatingConfiguration = "agent-runtime-operator-mutating-webhook-configuration"
+
+// agentRuntimeWebhookValidatingConfiguration is the name of the validating webhook configuration
+const agentRuntimeWebhookValidatingConfiguration = "agent-runtime-operator-validating-webhook-configuration"
+
+// agentRuntimeInstallUrl is the URL to install the Agent Runtime Operator
+const agentRuntimeInstallUrl = "https://github.com/agentic-layer/agent-runtime-operator/releases/" +
+	"download/v0.10.0/install.yaml"
+
+// controllerPodName holds the name of the controller manager pod for use across tests
+var controllerPodName string
 
 var (
 	// Optional Environment Variables:
@@ -76,12 +99,168 @@ var _ = BeforeSuite(func() {
 			_, _ = fmt.Fprintf(GinkgoWriter, "WARNING: CertManager is already installed. Skipping installation...\n")
 		}
 	}
+
+	// Deploy the Agent Runtime Operator which is a dependency for this operator
+	By("deploying the agent runtime")
+	cmd = exec.Command("kubectl", "apply", "-f", agentRuntimeInstallUrl)
+	_, err = utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to deploy the agent runtime")
+
+	By("waiting for agent-runtime-operator-controller-manager to be ready")
+	Eventually(func() error {
+		cmd := exec.Command("kubectl", "get", "deployment",
+			"agent-runtime-operator-controller-manager", "-n", agentRuntimeNamespace,
+			"-o", "jsonpath={.status.readyReplicas}")
+		output, err := utils.Run(cmd)
+		if err != nil {
+			return err
+		}
+		if output == "" || output == "0" {
+			return fmt.Errorf("agent-runtime-operator deployment not ready")
+		}
+		return nil
+	}, 5*time.Minute, 10*time.Second).Should(Succeed(), "agent-runtime-operator deployment should be ready")
+
+	// Deploy the operator
+	By("creating manager namespace")
+	cmd = exec.Command("kubectl", "create", "ns", namespace)
+	_, err = utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to create namespace")
+
+	By("labeling the namespace to enforce the restricted security policy")
+	cmd = exec.Command("kubectl", "label", "--overwrite", "ns", namespace,
+		"pod-security.kubernetes.io/enforce=restricted")
+	_, err = utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
+
+	By("installing CRDs")
+	cmd = exec.Command("make", "install")
+	_, err = utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
+
+	By("deploying the controller-manager")
+	cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
+	_, err = utils.Run(cmd)
+	Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+
+	By("loading the sample images on Kind")
+	// speed-up tests by pre-loading sample images used by tests from docker daemon into kind cluster
+	sampleImages := []string{
+		"ghcr.io/agentic-layer/mock-agent:0.6",
+	}
+	for _, img := range sampleImages {
+		cmd = exec.Command("docker", "pull", img)
+		_, err = utils.Run(cmd)
+		Expect(err).NotTo(HaveOccurred(), "Failed to pull image ", img)
+		err = utils.LoadImageToKindClusterWithName(img)
+		ExpectWithOffset(1, err).NotTo(HaveOccurred(), "Failed to load image ", img, " into Kind")
+	}
+
+	waitForWebhook(agentRuntimeNamespace, agentRuntimeWebhookServiceName)
+	waitForWebhookCaBundleMutating(agentRuntimeWebhookMutatingConfiguration)
+	waitForWebhookCaBundleValidating(agentRuntimeWebhookValidatingConfiguration)
 })
 
 var _ = AfterSuite(func() {
+	By("undeploying the controller-manager")
+	_, _ = utils.Run(exec.Command("make", "undeploy"))
+
+	By("uninstalling CRDs")
+	_, _ = utils.Run(exec.Command("make", "uninstall"))
+
+	By("removing manager namespace")
+	_, _ = utils.Run(exec.Command("kubectl", "delete", "ns", namespace))
+
+	By("cleaning up the agent runtime")
+	_, _ = utils.Run(exec.Command("kubectl", "delete", "-f", agentRuntimeInstallUrl))
+
 	// Teardown CertManager after the suite if not skipped and if it was not already installed
 	if !skipCertManagerInstall && !isCertManagerAlreadyInstalled {
 		_, _ = fmt.Fprintf(GinkgoWriter, "Uninstalling CertManager...\n")
 		utils.UninstallCertManager()
 	}
 })
+
+// waitForWebhook is a helper function that waits for webhook service to be ready
+func waitForWebhook(namespace string, webhookServiceName string) {
+	By("waiting for webhook deployment to be ready")
+	Eventually(func(g Gomega) {
+		// Check that the webhook deployment is ready
+		cmd := exec.Command("kubectl", "get", "deployment",
+			"-l", "control-plane=controller-manager", "-n", namespace,
+			"-o", "jsonpath={.items[0].status.readyReplicas}")
+		output, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(output).To(Equal("1"), "Controller manager should have 1 ready replica")
+	}, 3*time.Minute, 5*time.Second).Should(Succeed())
+
+	By("waiting for webhook service to be ready")
+	Eventually(func(g Gomega) {
+		// Check that the webhook service exists and has endpoints
+		cmd := exec.Command("kubectl", "get", "service",
+			webhookServiceName, "-n", namespace)
+		_, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred())
+
+		// Check that the webhook service has endpoints (meaning pods are ready)
+		cmd = exec.Command("kubectl", "get", "endpoints", webhookServiceName,
+			"-n", namespace, "-o", "jsonpath={.subsets[*].addresses[*].ip}")
+		output, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(output).NotTo(BeEmpty(), "Webhook service should have endpoints")
+	}).Should(Succeed())
+
+	By("verifying that the certificate secret has been created")
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get", "secrets", "webhook-server-cert", "-n", namespace)
+		_, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred())
+	}).Should(Succeed())
+}
+
+func waitForWebhookCaBundle(kind string, name string) {
+	Eventually(func(g Gomega) {
+		cmd := exec.Command("kubectl", "get",
+			kind,
+			name,
+			"-o", "go-template={{ range .webhooks }}{{ .clientConfig.caBundle }}{{ end }}")
+		mwhOutput, err := utils.Run(cmd)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(len(mwhOutput)).To(BeNumerically(">", 10))
+	}).Should(Succeed())
+}
+
+func waitForWebhookCaBundleMutating(name string) {
+	waitForWebhookCaBundle(
+		"mutatingwebhookconfigurations.admissionregistration.k8s.io",
+		name,
+	)
+}
+func waitForWebhookCaBundleValidating(name string) {
+	waitForWebhookCaBundle(
+		"validatingwebhookconfigurations.admissionregistration.k8s.io",
+		name,
+	)
+}
+
+func fetchKubernetesEvents() {
+	By("Fetching Kubernetes events")
+	cmd := exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
+	eventsOutput, err := utils.Run(cmd)
+	if err == nil {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Kubernetes events:\n%s", eventsOutput)
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Kubernetes events: %s", err)
+	}
+}
+
+func fetchControllerManagerPodLogs() {
+	By("Fetching controller manager pod logs")
+	cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
+	controllerLogs, err := utils.Run(cmd)
+	if err == nil {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerLogs)
+	} else {
+		_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Controller logs: %s", err)
+	}
+}
