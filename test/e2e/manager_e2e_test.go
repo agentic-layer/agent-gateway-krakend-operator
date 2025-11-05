@@ -22,7 +22,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -30,9 +29,6 @@ import (
 
 	"github.com/agentic-layer/agent-gateway-krakend-operator/test/utils"
 )
-
-// namespace where the project is deployed in
-const namespace = "agent-gateway-krakend-operator-system"
 
 // serviceAccountName created for the project
 const serviceAccountName = "agent-gateway-krakend-operator-controller-manager"
@@ -43,87 +39,12 @@ const metricsServiceName = "agent-gateway-krakend-operator-metrics-service"
 // metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
 const metricsRoleBindingName = "agent-gateway-krakend-operator-metrics-binding"
 
-// namespace where the agent-runtime is deployed in
-const agentRuntimeNamespace = "agent-runtime-operator-system"
-
-// agentRuntimeWebhookService is the name of the webhook service
-const agentRuntimeWebhookService = "agent-runtime-operator-webhook-service"
-
-// agentRuntimeWebhookMutatingConfiguration is the name of the mutating webhook configuration
-const agentRuntimeWebhookMutatingConfiguration = "agent-runtime-operator-mutating-webhook-configuration"
-
-// agentRuntimeWebhookValidatingConfiguration is the name of the validating webhook configuration
-const agentRuntimeWebhookValidatingConfiguration = "agent-runtime-operator-validating-webhook-configuration"
-
 var _ = Describe("Manager", Ordered, func() {
-	var controllerPodName string
-	const agentRuntimeInstallUrl = "https://github.com/agentic-layer/agent-runtime-operator/releases/" +
-		"download/v0.9.0/install.yaml"
-
-	// Before running the tests, set up the environment by creating the namespace,
-	// enforce the restricted security policy to the namespace, installing CRDs,
-	// and deploying the controller.
-	BeforeAll(func() {
-		By("creating manager namespace")
-		cmd := exec.Command("kubectl", "create", "ns", namespace)
-		_, err := utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create namespace")
-
-		By("labeling the namespace to enforce the restricted security policy")
-		cmd = exec.Command("kubectl", "label", "--overwrite", "ns", namespace,
-			"pod-security.kubernetes.io/enforce=restricted")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
-
-		By("deploying the agent runtime")
-		cmd = exec.Command("kubectl", "apply", "-f", agentRuntimeInstallUrl)
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the agent runtime")
-
-		By("waiting for agent-runtime-operator-controller-manager to be ready")
-		Eventually(func() error {
-			cmd := exec.Command("kubectl", "get", "deployment",
-				"agent-runtime-operator-controller-manager", "-n", "agent-runtime-operator-system",
-				"-o", "jsonpath={.status.readyReplicas}")
-			output, err := utils.Run(cmd)
-			if err != nil {
-				return err
-			}
-			if output == "" || output == "0" {
-				return fmt.Errorf("agent-runtime-operator deployment not ready")
-			}
-			return nil
-		}, 2*time.Minute, 10*time.Second).Should(Succeed(), "agent-runtime-operator deployment should be ready")
-
-		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", projectImage))
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
-
-		ensureWebhookServiceReady()
-	})
-
 	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
 	// and deleting the namespace.
 	AfterAll(func() {
 		By("cleaning up the curl pod for metrics")
 		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
-		_, _ = utils.Run(cmd)
-
-		By("undeploying the controller-manager")
-		cmd = exec.Command("make", "undeploy")
-		_, _ = utils.Run(cmd)
-
-		By("cleaning up the agent runtime")
-		cmd = exec.Command("kubectl", "delete", "-f", agentRuntimeInstallUrl)
-		_, _ = utils.Run(cmd)
-
-		By("uninstalling CRDs")
-		cmd = exec.Command("make", "uninstall")
-		_, _ = utils.Run(cmd)
-
-		By("removing manager namespace")
-		cmd = exec.Command("kubectl", "delete", "ns", namespace)
 		_, _ = utils.Run(cmd)
 	})
 
@@ -132,26 +53,11 @@ var _ = Describe("Manager", Ordered, func() {
 	AfterEach(func() {
 		specReport := CurrentSpecReport()
 		if specReport.Failed() {
-			By("Fetching controller manager pod logs")
-			cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
-			controllerLogs, err := utils.Run(cmd)
-			if err == nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerLogs)
-			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Controller logs: %s", err)
-			}
-
-			By("Fetching Kubernetes events")
-			cmd = exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
-			eventsOutput, err := utils.Run(cmd)
-			if err == nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Kubernetes events:\n%s", eventsOutput)
-			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Kubernetes events: %s", err)
-			}
+			fetchControllerManagerPodLogs()
+			fetchKubernetesEvents()
 
 			By("Fetching curl-metrics logs")
-			cmd = exec.Command("kubectl", "logs", "curl-metrics", "-n", namespace)
+			cmd := exec.Command("kubectl", "logs", "curl-metrics", "-n", namespace)
 			metricsOutput, err := utils.Run(cmd)
 			if err == nil {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Metrics logs:\n %s", metricsOutput)
@@ -293,76 +199,6 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
-
-		Context("Agent Gateway Routing", func() {
-			AfterEach(func() {
-				By("cleaning up test resources")
-				cmd := exec.Command("kubectl", "delete", "pod", "test-routing")
-				_, _ = utils.Run(cmd)
-
-				cmd = exec.Command("kubectl", "delete", "agent", "mocked-agent")
-				_, _ = utils.Run(cmd)
-
-				cmd = exec.Command("kubectl", "delete", "agentgateway", "agent-gateway")
-				_, _ = utils.Run(cmd)
-			})
-
-			It("should deploy an agent and agent gateway and test routing", func() {
-				By("deploying a test agent")
-				cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/crs/mocked-agent.yaml")
-				_, err := utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent")
-
-				By("waiting for agent deployment to be ready")
-				Eventually(func() error {
-					cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent", "-o", "jsonpath={.status.readyReplicas}")
-					output, err := utils.Run(cmd)
-					if err != nil {
-						return err
-					}
-					if output == "" || output == "0" {
-						return fmt.Errorf("mocked-agent deployment not ready")
-					}
-					return nil
-				}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent deployment should be ready")
-
-				By("deploying a test agent gateway")
-				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/agent-gateway.yaml")
-				_, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent gateway")
-
-				By("waiting for agent gateway to be ready")
-				Eventually(func() error {
-					cmd := exec.Command("kubectl", "get", "deployment", "agent-gateway", "-o", "jsonpath={.status.readyReplicas}")
-					output, err := utils.Run(cmd)
-					if err != nil {
-						return err
-					}
-					if output == "" || output == "0" {
-						return fmt.Errorf("agent gateway deployment not ready yet, status: %s", output)
-					}
-					return nil
-				}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent gateway should be ready")
-
-				By("testing routing from gateway to agent")
-				cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/curl-routing-test.yaml")
-				_, err = utils.Run(cmd)
-				Expect(err).NotTo(HaveOccurred(), "Failed to create routing test pod")
-
-				By("checking that the response contains HTTP 200 status")
-				Eventually(func() error {
-					cmd := exec.Command("kubectl", "logs", "test-routing")
-					logOutput, err := utils.Run(cmd)
-					if err != nil {
-						return err
-					}
-					if !strings.Contains(logOutput, "200 OK") {
-						return fmt.Errorf("expected HTTP 200 status code, got: %s", logOutput)
-					}
-					return nil
-				}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should receive HTTP 200 response")
-			})
-		})
 	})
 })
 
@@ -415,66 +251,6 @@ func getMetricsOutput() string {
 	Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
 	Expect(metricsOutput).To(ContainSubstring("< HTTP/1.1 200 OK"))
 	return metricsOutput
-}
-
-func waitForWebhookCaBundle(kind string, name string) {
-	verifyCAInjection := func(g Gomega) {
-		cmd := exec.Command("kubectl", "get",
-			kind,
-			name,
-			"-o", "go-template={{ range .webhooks }}{{ .clientConfig.caBundle }}{{ end }}")
-		mwhOutput, err := utils.Run(cmd)
-		g.Expect(err).NotTo(HaveOccurred())
-		g.Expect(len(mwhOutput)).To(BeNumerically(">", 10))
-	}
-	Eventually(verifyCAInjection).Should(Succeed())
-}
-
-func waitForWebhookCaBundleMutating() {
-	waitForWebhookCaBundle(
-		"mutatingwebhookconfigurations.admissionregistration.k8s.io",
-		agentRuntimeWebhookMutatingConfiguration,
-	)
-}
-func waitForWebhookCaBundleValidating() {
-	waitForWebhookCaBundle(
-		"validatingwebhookconfigurations.admissionregistration.k8s.io",
-		agentRuntimeWebhookValidatingConfiguration,
-	)
-}
-
-// waitForWebhookServiceReady waits for the webhook service to be ready with endpoints.
-func waitForWebhookServiceReady(g Gomega) {
-	// Check that the webhook service exists and has endpoints
-	cmd := exec.Command("kubectl", "get", "service",
-		agentRuntimeWebhookService, "-n", agentRuntimeNamespace)
-	_, err := utils.Run(cmd)
-	g.Expect(err).NotTo(HaveOccurred())
-
-	// Check that the webhook service has endpoints (meaning pods are ready)
-	cmd = exec.Command("kubectl", "get", "endpoints", agentRuntimeWebhookService,
-		"-n", agentRuntimeNamespace, "-o", "jsonpath={.subsets[*].addresses[*].ip}")
-	output, err := utils.Run(cmd)
-	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(output).NotTo(BeEmpty(), "Webhook service should have endpoints")
-
-	// Verify that the certificate secret has been created
-	verifyCertManager := func(g Gomega) {
-		cmd := exec.Command("kubectl", "get", "secrets", "webhook-server-cert", "-n", agentRuntimeNamespace)
-		_, err := utils.Run(cmd)
-		g.Expect(err).NotTo(HaveOccurred())
-	}
-	Eventually(verifyCertManager).Should(Succeed())
-
-	waitForWebhookCaBundleMutating()
-	waitForWebhookCaBundleValidating()
-}
-
-// ensureWebhookServiceReady is a helper function that waits for webhook service to be ready
-func ensureWebhookServiceReady() {
-	By("waiting for webhook service to be ready")
-	Eventually(waitForWebhookServiceReady, 2*time.Minute, 5*time.Second).
-		Should(Succeed(), "Webhook service should be ready")
 }
 
 // tokenRequest is a simplified representation of the Kubernetes TokenRequest API response,
