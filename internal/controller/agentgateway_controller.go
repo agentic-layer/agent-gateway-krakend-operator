@@ -21,6 +21,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"net/url"
+	"strings"
 	"text/template"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -40,7 +42,7 @@ import (
 
 const DefaultGatewayPort = 8080
 const ControllerName = "runtime.agentic-layer.ai/agent-gateway-krakend-controller"
-const Image = "ghcr.io/agentic-layer/agent-gateway-krakend:0.1.1"
+const Image = "ghcr.io/agentic-layer/agent-gateway-krakend:0.2.0"
 
 // KrakendBackend represents a backend configuration in KrakenD
 type KrakendBackend struct {
@@ -550,46 +552,44 @@ func (r *AgentGatewayReconciler) createDeploymentForKrakend(agentGateway *agentr
 	return deployment, nil
 }
 
-// generateEndpointForAgent creates the endpoint JSON configuration for each protocol of an agent
+// generateEndpointForAgent creates the endpoint JSON configuration for an agent based on its Status.Url
 func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, agent *agentruntimev1alpha1.Agent) ([]KrakendEndpoint, error) {
-	agentServiceNamespacedName, err := r.getAgentServiceNamespacedName(ctx, agent)
+	log := logf.FromContext(ctx)
+
+	// If the agent doesn't have a URL set in status, log and return empty endpoints (not an error)
+	if agent.Status.Url == "" {
+		log.Info("Agent has no URL set in status, skipping endpoint generation", "agent.name", agent.Name, "agent.namespace", agent.Namespace)
+		return []KrakendEndpoint{}, nil
+	}
+
+	// Parse the URL to separate host from path
+	parsedURL, err := url.Parse(agent.Status.Url)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get service URL for agent %s: %w", agent.Name, err)
+		return nil, fmt.Errorf("failed to parse URL for agent %s: %w", agent.Name, err)
 	}
 
-	// Agents without protocols are not allowed
-	if len(agent.Spec.Protocols) == 0 {
-		return nil, fmt.Errorf("agent %s has no protocols defined", agent.Name)
-	}
+	// Construct the host (scheme + host + port)
+	hostURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
 
-	// Pre-allocate slice with the exact capacity needed
-	endpoints := make([]KrakendEndpoint, 0, len(agent.Spec.Protocols))
+	// Remove /.well-known/agent-card.json from the path to get the RPC URL
+	urlPattern := strings.TrimSuffix(parsedURL.Path, "/.well-known/agent-card.json")
 
-	// Create an endpoint for each protocol
-	for _, protocol := range agent.Spec.Protocols {
-		endpointPath := fmt.Sprintf("/%s%s", agent.Name, protocol.Path)
+	// Create a single A2A endpoint for the agent
+	endpointPath := fmt.Sprintf("/%s", agent.Name)
 
-		method := "POST"
-		if protocol.Type == "OpenAI" {
-			method = "GET"
-		}
-
-		backendURL := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", agentServiceNamespacedName.Name, agentServiceNamespacedName.Namespace, protocol.Port)
-
-		endpoints = append(endpoints, KrakendEndpoint{
-			Endpoint:       endpointPath,
-			OutputEncoding: "no-op",
-			Method:         method,
-			Backend: []KrakendBackend{
-				{
-					Host:       []string{backendURL},
-					URLPattern: protocol.Path,
-				},
+	endpoint := KrakendEndpoint{
+		Endpoint:       endpointPath,
+		OutputEncoding: "no-op",
+		Method:         "POST", // A2A protocol uses POST
+		Backend: []KrakendBackend{
+			{
+				Host:       []string{hostURL},
+				URLPattern: urlPattern,
 			},
-		})
+		},
 	}
 
-	return endpoints, nil
+	return []KrakendEndpoint{endpoint}, nil
 }
 
 // configMapNeedsUpdate compares existing and desired ConfigMaps to determine if an update is needed
@@ -728,38 +728,6 @@ func (r *AgentGatewayReconciler) getConfigMapNameFromVolumes(volumes []corev1.Vo
 		}
 	}
 	return ""
-}
-
-// getAgentServiceNamespacedName finds the service owned by the agent and generates the Kubernetes service URL
-func (r *AgentGatewayReconciler) getAgentServiceNamespacedName(ctx context.Context, agent *agentruntimev1alpha1.Agent) (*types.NamespacedName, error) {
-	var serviceList corev1.ServiceList
-	if err := r.List(ctx, &serviceList, client.InNamespace(agent.Namespace)); err != nil {
-		return nil, fmt.Errorf("failed to list services in namespace %s: %w", agent.Namespace, err)
-	}
-
-	var foundService *corev1.Service
-	for i := range serviceList.Items {
-		service := &serviceList.Items[i]
-		for _, ownerRef := range service.OwnerReferences {
-			if ownerRef.Kind == "Agent" && ownerRef.Name == agent.Name && ownerRef.UID == agent.UID {
-				foundService = service
-				break
-			}
-		}
-		if foundService != nil {
-			break
-		}
-	}
-
-	if foundService == nil {
-		return nil, fmt.Errorf("no service found owned by agent %s in namespace %s", agent.Name, agent.Namespace)
-	}
-
-	if len(foundService.Spec.Ports) == 0 {
-		return nil, fmt.Errorf("service %s owned by agent %s has no ports defined", foundService.Name, agent.Name)
-	}
-
-	return &types.NamespacedName{Namespace: foundService.Namespace, Name: foundService.Name}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
