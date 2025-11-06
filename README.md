@@ -105,7 +105,6 @@ spec:
   agentGatewayClassName: krakend  # Optional: specify controller responsibility
   replicas: 2  # Number of gateway replicas (optional, default: 1)
   timeout: "30000ms"  # Request timeout (optional, default: 60000ms)
-  cacheTTL: "300s"  # Cache TTL (optional, default: 300s)
 ```
 
 ### Agent Integration
