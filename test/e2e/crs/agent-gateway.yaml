@@ -1,6 +1,0 @@
-apiVersion: runtime.agentic-layer.ai/v1alpha1
-kind: AgentGateway
-metadata:
-  name: agent-gateway
-spec:
-  timeout: 30s
