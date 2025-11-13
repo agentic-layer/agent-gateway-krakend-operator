@@ -17,9 +17,9 @@ limitations under the License.
 package e2e
 
 import (
+	"context"
 	"fmt"
 	"os/exec"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -40,73 +40,65 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		}
 	})
 
-	Context("Agent Gateway Routing", func() {
-		AfterEach(func() {
-			By("cleaning up test resources")
-			cmd := exec.Command("kubectl", "delete", "pod", "test-routing")
-			_, _ = utils.Run(cmd)
+	AfterEach(func() {
+		By("cleaning up test resources")
+		_, _ = utils.Run(exec.Command("kubectl", "delete", "agent",
+			"-f", "config/samples/runtime_v1alpha1_agent.yaml"))
 
-			cmd = exec.Command("kubectl", "delete", "agent", "mocked-agent")
-			_, _ = utils.Run(cmd)
+		_, _ = utils.Run(exec.Command("kubectl", "delete", "agent",
+			"-f", "config/samples/runtime_v1alpha1_agentgateway.yaml"))
+	})
 
-			cmd = exec.Command("kubectl", "delete", "agentgateway", "agent-gateway")
-			_, _ = utils.Run(cmd)
-		})
+	It("should proxy A2A requests to agent", func() {
+		// TODO: Once the agent gateway correctly updates itself upon agent changes, join agent and gateway
+		// into one file.
+		By("applying the agent")
+		_, err := utils.Run(exec.Command("kubectl", "apply",
+			"-f", "config/samples/runtime_v1alpha1_agent.yaml"))
+		Expect(err).NotTo(HaveOccurred(), "Failed to apply agentgateway sample")
 
-		It("should deploy an agent and agent gateway and test routing", func() {
-			By("deploying a test agent")
-			cmd := exec.Command("kubectl", "apply", "-f", "test/e2e/crs/mocked-agent.yaml")
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent")
+		By("waiting for agent to be ready")
+		err = utils.VerifyAgentReady("mocked-agent-exposed-1", "default", 3*time.Minute)
+		Expect(err).NotTo(HaveOccurred())
 
-			By("waiting for agent deployment to be ready")
-			Eventually(func() error {
-				cmd := exec.Command("kubectl", "get", "deployment", "mocked-agent", "-o", "jsonpath={.status.readyReplicas}")
-				output, err := utils.Run(cmd)
-				if err != nil {
-					return err
-				}
-				if output == "" || output == "0" {
-					return fmt.Errorf("mocked-agent deployment not ready")
-				}
-				return nil
-			}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent deployment should be ready")
+		By("applying the agentgateway")
+		_, err = utils.Run(exec.Command("kubectl", "apply",
+			"-f", "config/samples/runtime_v1alpha1_agentgateway.yaml"))
+		Expect(err).NotTo(HaveOccurred(), "Failed to apply agentgateway sample")
 
-			By("deploying a test agent gateway")
-			cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/agent-gateway.yaml")
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to deploy test agent gateway")
+		By("waiting for agent gateway deployment to be ready")
+		Eventually(func() error {
+			return utils.VerifyDeploymentReady("agent-gateway", "default", 3*time.Minute)
+		}).NotTo(HaveOccurred(), "Agent gateway deployment should be ready")
 
-			By("waiting for agent gateway to be ready")
-			Eventually(func() error {
-				cmd := exec.Command("kubectl", "get", "deployment", "agent-gateway", "-o", "jsonpath={.status.readyReplicas}")
-				output, err := utils.Run(cmd)
-				if err != nil {
-					return err
-				}
-				if output == "" || output == "0" {
-					return fmt.Errorf("agent gateway deployment not ready yet, status: %s", output)
-				}
-				return nil
-			}, 3*time.Minute, 10*time.Second).Should(Succeed(), "Agent gateway should be ready")
+		By("creating port-forward to the gateway")
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		localPort, err := utils.PortForwardService(ctx, "default", "agent-gateway", 10000)
+		Expect(err).NotTo(HaveOccurred(), "Failed to create port-forward to agent gateway")
 
-			By("testing routing from gateway to agent")
-			cmd = exec.Command("kubectl", "apply", "-f", "test/e2e/crs/curl-routing-test.yaml")
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create routing test pod")
-
-			By("checking that the response contains HTTP 200 status")
-			Eventually(func() error {
-				cmd := exec.Command("kubectl", "logs", "test-routing")
-				logOutput, err := utils.Run(cmd)
-				if err != nil {
-					return err
-				}
-				if !strings.Contains(logOutput, "200 OK") {
-					return fmt.Errorf("expected HTTP 200 status code, got: %s", logOutput)
-				}
-				return nil
-			}, 1*time.Minute, 5*time.Second).Should(Succeed(), "Should receive HTTP 200 response")
-		})
+		By("sending HTTP request to the gateway")
+		payload := map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "message/send",
+			"params": map[string]interface{}{
+				"message": map[string]interface{}{
+					"role": "user",
+					"parts": []map[string]interface{}{
+						{
+							"kind": "text",
+							"text": "Message to echo back",
+						},
+					},
+					"messageId": "9229e770-767c-417b-a0b0-f0741243c589",
+					"contextId": "abcd1234-5678-90ab-cdef-1234567890ab",
+				},
+				"metadata": map[string]interface{}{},
+			},
+		}
+		url := fmt.Sprintf("http://localhost:%d/mocked-agent-exposed-1/", localPort)
+		err = utils.PostRequest(url, payload)
+		Expect(err).NotTo(HaveOccurred(), "Failed to send POST request to agent gateway")
 	})
 })

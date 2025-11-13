@@ -1,7 +1,9 @@
+---
 apiVersion: runtime.agentic-layer.ai/v1alpha1
 kind: Agent
 metadata:
-  name: mocked-agent
+  name: mocked-agent-exposed-1
 spec:
   image: ghcr.io/agentic-layer/mock-agent:0.6
   exposed: true
+---
