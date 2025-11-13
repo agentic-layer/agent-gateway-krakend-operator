@@ -155,19 +155,11 @@ spec:
 ### Running E2E Tests
 
 ```bash
-# Run complete E2E test suite
+# Run complete E2E test suite (it will create a test cluster, if not present)
 make test-e2e
 ```
 
-### Manual Testing
-
 ```bash
-# Set up test cluster
-make setup-test-e2e
-
-# Run unit tests with comprehensive coverage
-make test
-
 # Clean up test cluster
 make cleanup-test-e2e
 ```
