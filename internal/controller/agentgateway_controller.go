@@ -35,6 +35,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
@@ -283,6 +284,15 @@ func (r *AgentGatewayReconciler) ensureDeployment(ctx context.Context, agentGate
 			existingDeployment.Spec.Replicas = desiredDeployment.Spec.Replicas
 			existingDeployment.Spec.Template.Labels = desiredDeployment.Spec.Template.Labels
 			existingDeployment.Spec.Template.Spec.Volumes = desiredDeployment.Spec.Template.Spec.Volumes
+
+			// Update pod template annotations to trigger rolling restart on config changes
+			if existingDeployment.Spec.Template.Annotations == nil {
+				existingDeployment.Spec.Template.Annotations = make(map[string]string)
+			}
+			for key, value := range desiredDeployment.Spec.Template.Annotations {
+				existingDeployment.Spec.Template.Annotations[key] = value
+			}
+
 			// Only update our required labels, preserve others
 			if existingDeployment.Labels == nil {
 				existingDeployment.Labels = make(map[string]string)
@@ -744,6 +754,27 @@ func (r *AgentGatewayReconciler) getConfigMapNameFromVolumes(volumes []corev1.Vo
 	return ""
 }
 
+// findAgentGatewaysForAgent returns all AgentGateway resources that need to be reconciled
+// when an Agent changes. Since all gateways discover agents across all namespaces,
+// any Agent change affects all AgentGateway resources.
+func (r *AgentGatewayReconciler) findAgentGatewaysForAgent(ctx context.Context, obj client.Object) []ctrl.Request {
+	var agentGatewayList agentruntimev1alpha1.AgentGatewayList
+	if err := r.List(ctx, &agentGatewayList); err != nil {
+		return []ctrl.Request{}
+	}
+
+	requests := make([]ctrl.Request, len(agentGatewayList.Items))
+	for i, gw := range agentGatewayList.Items {
+		requests[i] = ctrl.Request{
+			NamespacedName: types.NamespacedName{
+				Name:      gw.Name,
+				Namespace: gw.Namespace,
+			},
+		}
+	}
+	return requests
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *AgentGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
@@ -751,6 +782,10 @@ func (r *AgentGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ConfigMap{}).
+		Watches(
+			&agentruntimev1alpha1.Agent{},
+			handler.EnqueueRequestsFromMapFunc(r.findAgentGatewaysForAgent),
+		).
 		Named(ControllerName).
 		Complete(r)
 }

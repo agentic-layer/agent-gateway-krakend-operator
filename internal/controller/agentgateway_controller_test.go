@@ -1565,6 +1565,161 @@ var _ = Describe("AgentGateway Controller", func() {
 	})
 })
 
+var _ = Describe("findAgentGatewaysForAgent", func() {
+	var (
+		ctx        context.Context
+		reconciler *AgentGatewayReconciler
+		agent      *agentruntimev1alpha1.Agent
+		timeout    = time.Second * 10
+		interval   = time.Millisecond * 250
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		reconciler = &AgentGatewayReconciler{
+			Client: k8sClient,
+			Scheme: k8sClient.Scheme(),
+		}
+
+		// Create a test agent for use in all tests
+		agent = createTestAgent("test-agent", "default", true)
+		Expect(k8sClient.Create(ctx, agent)).To(Succeed())
+	})
+
+	AfterEach(func() {
+		cleanupAllResources(ctx)
+	})
+
+	Context("when no AgentGateways exist", func() {
+		It("should return empty list", func() {
+			requests := reconciler.findAgentGatewaysForAgent(ctx, agent)
+			Expect(requests).To(BeEmpty())
+		})
+	})
+
+	Context("when one AgentGateway exists", func() {
+		It("should return single reconcile request with correct NamespacedName", func() {
+			// Create default class and gateway
+			agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+			Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
+
+			agentGateway := createTestAgentGateway("test-gateway", "default", nil)
+			Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
+
+			// Wait for resources to be available
+			Eventually(func() bool {
+				var gw agentruntimev1alpha1.AgentGateway
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      "test-gateway",
+					Namespace: "default",
+				}, &gw)
+				return err == nil
+			}, timeout, interval).Should(BeTrue())
+
+			requests := reconciler.findAgentGatewaysForAgent(ctx, agent)
+
+			Expect(requests).To(HaveLen(1))
+			Expect(requests[0].Name).To(Equal("test-gateway"))
+			Expect(requests[0].Namespace).To(Equal("default"))
+		})
+	})
+
+	Context("when multiple AgentGateways exist in different namespaces", func() {
+		It("should return all gateways as reconcile requests", func() {
+			// Create default class
+			agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+			Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
+
+			// Create first gateway in default namespace
+			gateway1 := createTestAgentGateway("gateway-1", "default", nil)
+			Expect(k8sClient.Create(ctx, gateway1)).To(Succeed())
+
+			// Create second gateway in default namespace
+			gateway2 := createTestAgentGateway("gateway-2", "default", nil)
+			Expect(k8sClient.Create(ctx, gateway2)).To(Succeed())
+
+			// Create test namespace
+			testNamespace := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-namespace",
+				},
+			}
+			Expect(k8sClient.Create(ctx, testNamespace)).To(Succeed())
+
+			// Create third gateway in test namespace
+			gateway3 := createTestAgentGateway("gateway-3", "test-namespace", nil)
+			Expect(k8sClient.Create(ctx, gateway3)).To(Succeed())
+
+			// Wait for all resources to be available
+			Eventually(func() int {
+				var gwList agentruntimev1alpha1.AgentGatewayList
+				err := k8sClient.List(ctx, &gwList)
+				if err != nil {
+					return 0
+				}
+				return len(gwList.Items)
+			}, timeout, interval).Should(Equal(3))
+
+			requests := reconciler.findAgentGatewaysForAgent(ctx, agent)
+
+			Expect(requests).To(HaveLen(3))
+
+			// Verify all gateways are included
+			gatewayNames := make(map[string]string) // map[name]namespace
+			for _, req := range requests {
+				gatewayNames[req.Name] = req.Namespace
+			}
+
+			Expect(gatewayNames).To(HaveKeyWithValue("gateway-1", "default"))
+			Expect(gatewayNames).To(HaveKeyWithValue("gateway-2", "default"))
+			Expect(gatewayNames).To(HaveKeyWithValue("gateway-3", "test-namespace"))
+		})
+	})
+
+	Context("when agent changes affect all gateways", func() {
+		It("should trigger reconciliation for all gateways regardless of agent namespace", func() {
+			// Create default class
+			agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+			Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
+
+			// Create gateways
+			gateway1 := createTestAgentGateway("gateway-a", "default", nil)
+			Expect(k8sClient.Create(ctx, gateway1)).To(Succeed())
+
+			gateway2 := createTestAgentGateway("gateway-b", "default", nil)
+			Expect(k8sClient.Create(ctx, gateway2)).To(Succeed())
+
+			// Wait for resources
+			Eventually(func() int {
+				var gwList agentruntimev1alpha1.AgentGatewayList
+				err := k8sClient.List(ctx, &gwList)
+				if err != nil {
+					return 0
+				}
+				return len(gwList.Items)
+			}, timeout, interval).Should(Equal(2))
+
+			// Create an agent in a different namespace
+			testNamespace := &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "agent-namespace",
+				},
+			}
+			Expect(k8sClient.Create(ctx, testNamespace)).To(Succeed())
+
+			differentAgent := createTestAgent("different-agent", "agent-namespace", true)
+			Expect(k8sClient.Create(ctx, differentAgent)).To(Succeed())
+
+			// Even though agent is in different namespace, all gateways should be returned
+			requests := reconciler.findAgentGatewaysForAgent(ctx, differentAgent)
+
+			Expect(requests).To(HaveLen(2))
+			Expect(requests[0].Name).To(BeElementOf("gateway-a", "gateway-b"))
+			Expect(requests[1].Name).To(BeElementOf("gateway-a", "gateway-b"))
+		})
+	})
+})
+
 func int32Ptr(i int32) *int32 {
 	return &i
 }
