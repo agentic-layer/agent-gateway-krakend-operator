@@ -177,25 +177,25 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 			_, statusCode, err := utils.GetRequestWithStatus(gatewayUrl + "/mocked-agent-exposed-1/.well-known/agent-card.json")
 			if err != nil {
 				// Connection/network error - retry
-				fmt.Fprintf(GinkgoWriter, "Connection error (will retry): %v\n", err)
+				_, _ = fmt.Fprintf(GinkgoWriter, "Connection error (will retry): %v\n", err)
 				return fmt.Errorf("failed to connect to gateway: %w", err)
 			}
 
 			// Log the received status code
-			fmt.Fprintf(GinkgoWriter, "Received HTTP status code: %d\n", statusCode)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Received HTTP status code: %d\n", statusCode)
 
 			if statusCode == 404 {
 				// Success! Gateway correctly removed the deleted agent
-				fmt.Fprintf(GinkgoWriter, "✓ Gateway correctly returns 404 for deleted agent\n")
+				_, _ = fmt.Fprintf(GinkgoWriter, "✓ Gateway correctly returns 404 for deleted agent\n")
 				return nil
 			}
 			if statusCode == 200 {
 				// Agent still exists in gateway config - needs more time to reconcile
-				fmt.Fprintf(GinkgoWriter, "Agent still accessible with HTTP 200, gateway needs more time to reconcile\n")
+				_, _ = fmt.Fprintf(GinkgoWriter, "Agent still accessible with HTTP 200, gateway needs more time to reconcile\n")
 				return fmt.Errorf("expected 404 for deleted agent, but agent is still accessible (HTTP 200)")
 			}
 			// Unexpected status code
-			fmt.Fprintf(GinkgoWriter, "Unexpected status code: %d\n", statusCode)
+			_, _ = fmt.Fprintf(GinkgoWriter, "Unexpected status code: %d\n", statusCode)
 			return fmt.Errorf("expected 404 for deleted agent, got unexpected status code: %d", statusCode)
 		}, 3*time.Minute, 2*time.Second).Should(Succeed(), "Gateway should return 404 for deleted agent")
 
