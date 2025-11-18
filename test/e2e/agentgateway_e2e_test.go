@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -46,28 +45,40 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 	})
 
 	BeforeAll(func() {
-		// TODO: @PAAL-208 Once the agent gateway correctly updates itself upon agent changes, join agent and gateway
-		// into one file.
-		By("applying the agent")
+		By("applying agent and gateway together")
 		_, err := utils.Run(exec.Command("kubectl", "apply",
-			"-f", "config/samples/runtime_v1alpha1_agent.yaml"))
-		Expect(err).NotTo(HaveOccurred(), "Failed to apply agent sample")
+			"-f", "config/samples/runtime_v1alpha1_combined.yaml"))
+		Expect(err).NotTo(HaveOccurred(), "Failed to apply agent and gateway samples")
 
 		By("waiting for agent to be ready")
 		err = utils.VerifyAgentReady("mocked-agent-exposed-1", "default", 3*time.Minute)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("applying the agentgateway")
-		_, err = utils.Run(exec.Command("kubectl", "apply",
-			"-f", "config/samples/runtime_v1alpha1_agentgateway.yaml"))
-		Expect(err).NotTo(HaveOccurred(), "Failed to apply agentgateway sample")
-
 		By("waiting for agent gateway deployment to be ready")
 		Eventually(func() error {
 			return utils.VerifyDeploymentReady("agent-gateway", "default", 3*time.Minute)
-		}).NotTo(HaveOccurred(), "Agent gateway deployment should be ready")
+		}, 3*time.Minute, 5*time.Second).Should(Succeed(), "Agent gateway deployment should be ready")
 
-		By("creating port-forward to the gateway")
+		By("waiting for gateway to have agent endpoints")
+		Eventually(func() error {
+			// Create temporary port-forward to check endpoint availability
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			localPort, err := utils.PortForwardService(ctx, "default", "agent-gateway", 10000)
+			if err != nil {
+				return fmt.Errorf("port-forward failed: %w", err)
+			}
+
+			testUrl := fmt.Sprintf("http://localhost:%d/mocked-agent-exposed-1/.well-known/agent-card.json", localPort)
+			_, err = utils.GetRequest(testUrl)
+			if err != nil {
+				return fmt.Errorf("agent endpoint not yet available: %w", err)
+			}
+			return nil
+		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Gateway should have agent endpoints after reconciliation")
+
+		By("creating stable port-forward for tests")
 		ctx, cancel := context.WithCancel(context.Background())
 		portForwardCancel = cancel
 		DeferCleanup(cancel)
@@ -79,11 +90,8 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 
 	AfterAll(func() {
 		By("cleaning up test resources")
-		_, _ = utils.Run(exec.Command("kubectl", "delete", "agent",
-			"-f", "config/samples/runtime_v1alpha1_agent.yaml"))
-
-		_, _ = utils.Run(exec.Command("kubectl", "delete", "agent",
-			"-f", "config/samples/runtime_v1alpha1_agentgateway.yaml"))
+		_, _ = utils.Run(exec.Command("kubectl", "delete",
+			"-f", "config/samples/runtime_v1alpha1_combined.yaml"))
 	})
 
 	It("should proxy A2A requests to agent", func() {
@@ -128,7 +136,6 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		Expect(responseMap["url"]).To(Equal(gatewayUrl + "/mocked-agent-exposed-1"))
 	})
 
-	// Todo FIt -> It after PAAL-208
 	It("should reload when agent is deleted", func() {
 		By("verifying agent is accessible via agent card")
 		_, err := utils.GetRequest(gatewayUrl + "/mocked-agent-exposed-1/.well-known/agent-card.json")
@@ -163,16 +170,36 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 			}
 			gatewayUrl = fmt.Sprintf("http://localhost:%d", localPort)
 
-			_, err = utils.GetRequest(gatewayUrl + "/mocked-agent-exposed-1/.well-known/agent-card.json")
-			if err != nil && strings.Contains(err.Error(), "404") {
-				return nil // Expected: 404 means gateway removed the agent
+			// Wait briefly for port-forward to stabilize
+			time.Sleep(1 * time.Second)
+
+			// Check if gateway returns 404 for deleted agent
+			_, statusCode, err := utils.GetRequestWithStatus(gatewayUrl + "/mocked-agent-exposed-1/.well-known/agent-card.json")
+			if err != nil {
+				// Connection/network error - retry
+				fmt.Fprintf(GinkgoWriter, "Connection error (will retry): %v\n", err)
+				return fmt.Errorf("failed to connect to gateway: %w", err)
 			}
-			if err == nil {
-				return fmt.Errorf("expected 404 for deleted agent, but request succeeded")
+
+			// Log the received status code
+			fmt.Fprintf(GinkgoWriter, "Received HTTP status code: %d\n", statusCode)
+
+			if statusCode == 404 {
+				// Success! Gateway correctly removed the deleted agent
+				fmt.Fprintf(GinkgoWriter, "✓ Gateway correctly returns 404 for deleted agent\n")
+				return nil
 			}
-			return fmt.Errorf("expected 404 for deleted agent, got different error: %v", err)
+			if statusCode == 200 {
+				// Agent still exists in gateway config - needs more time to reconcile
+				fmt.Fprintf(GinkgoWriter, "Agent still accessible with HTTP 200, gateway needs more time to reconcile\n")
+				return fmt.Errorf("expected 404 for deleted agent, but agent is still accessible (HTTP 200)")
+			}
+			// Unexpected status code
+			fmt.Fprintf(GinkgoWriter, "Unexpected status code: %d\n", statusCode)
+			return fmt.Errorf("expected 404 for deleted agent, got unexpected status code: %d", statusCode)
 		}, 3*time.Minute, 2*time.Second).Should(Succeed(), "Gateway should return 404 for deleted agent")
 
+		By("verified gateway successfully returns 404 for deleted agent")
 	})
 
 	It("should reload when agent is added", func() {
@@ -187,7 +214,7 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 
 		By("adding the agent back")
 		_, err = utils.Run(exec.Command("kubectl", "apply",
-			"-f", "config/samples/runtime_v1alpha1_agent.yaml"))
+			"-f", "config/samples/runtime_v1alpha1_combined.yaml"))
 		Expect(err).NotTo(HaveOccurred(), "Failed to apply agent")
 
 		By("waiting for agent to be ready")

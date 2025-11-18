@@ -1,4 +1,4 @@
 ## Append samples of your project ##
 resources:
-- runtime_v1alpha1_agentgateway.yaml
+- runtime_v1alpha1_combined.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
