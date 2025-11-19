@@ -47,7 +47,7 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 	BeforeAll(func() {
 		By("applying agent and gateway together")
 		_, err := utils.Run(exec.Command("kubectl", "apply",
-			"-f", "config/samples/runtime_v1alpha1_combined.yaml"))
+			"-f", "config/samples/runtime_v1alpha1_gateway_with_agent.yaml"))
 		Expect(err).NotTo(HaveOccurred(), "Failed to apply agent and gateway samples")
 
 		By("waiting for agent to be ready")
@@ -91,7 +91,7 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 	AfterAll(func() {
 		By("cleaning up test resources")
 		_, _ = utils.Run(exec.Command("kubectl", "delete",
-			"-f", "config/samples/runtime_v1alpha1_combined.yaml"))
+			"-f", "config/samples/runtime_v1alpha1_gateway_with_agent.yaml"))
 	})
 
 	It("should proxy A2A requests to agent", func() {
@@ -214,7 +214,7 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 
 		By("adding the agent back")
 		_, err = utils.Run(exec.Command("kubectl", "apply",
-			"-f", "config/samples/runtime_v1alpha1_combined.yaml"))
+			"-f", "config/samples/runtime_v1alpha1_gateway_with_agent.yaml"))
 		Expect(err).NotTo(HaveOccurred(), "Failed to apply agent")
 
 		By("waiting for agent to be ready")
