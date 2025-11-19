@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -1358,6 +1359,77 @@ var _ = Describe("AgentGateway Controller", func() {
 
 			krakendConfig := configMap.Data["krakend.json"]
 			Expect(krakendConfig).To(ContainSubstring("/new-agent"))
+		})
+
+		It("should detect and reconcile manual ConfigMap modifications", func() {
+			// Arrange: Get initial ConfigMap created by BeforeEach
+			configMapName := agentGatewayName + "-krakend-config"
+			configMap := &corev1.ConfigMap{}
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: agentGatewayNamespace,
+				}, configMap)
+				return err == nil
+			}, timeout, interval).Should(BeTrue())
+
+			originalConfig := configMap.Data["krakend.json"]
+			Expect(originalConfig).NotTo(BeEmpty())
+
+			// Act: Simulate configuration drift by manually corrupting ConfigMap
+			configMap.Data["krakend.json"] = `{"corrupted": "manual change"}`
+			err := k8sClient.Update(ctx, configMap)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify drift was applied
+			corruptedConfigMap := &corev1.ConfigMap{}
+			err = k8sClient.Get(ctx, types.NamespacedName{
+				Name:      configMapName,
+				Namespace: agentGatewayNamespace,
+			}, corruptedConfigMap)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(corruptedConfigMap.Data["krakend.json"]).To(Equal(`{"corrupted": "manual change"}`))
+
+			// Act: Trigger reconciliation
+			result, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      agentGatewayName,
+					Namespace: agentGatewayNamespace,
+				},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal(ctrl.Result{}))
+
+			// Assert: Controller should restore ConfigMap to correct state
+			// The controller's configMapNeedsUpdate() detects drift and ensureConfigMap() updates it
+			reconciledConfigMap := &corev1.ConfigMap{}
+
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      configMapName,
+					Namespace: agentGatewayNamespace,
+				}, reconciledConfigMap)
+				if err != nil {
+					return false
+				}
+
+				krakendConfig := reconciledConfigMap.Data["krakend.json"]
+				hasCorruption := len(krakendConfig) > 0 && krakendConfig == `{"corrupted": "manual change"}`
+				hasValidStructure := len(krakendConfig) > 0 &&
+					strings.Contains(krakendConfig, "endpoints") &&
+					strings.Contains(krakendConfig, "version")
+
+				return !hasCorruption && hasValidStructure
+			}, timeout, interval).Should(BeTrue())
+
+			// Verify KrakenD configuration structure is fully restored
+			finalConfig := reconciledConfigMap.Data["krakend.json"]
+			Expect(finalConfig).NotTo(ContainSubstring("corrupted"))
+			Expect(finalConfig).To(ContainSubstring("endpoints"))
+			Expect(finalConfig).To(ContainSubstring("agent-gateway-krakend"))
+			Expect(finalConfig).NotTo(Equal(`{"corrupted": "manual change"}`))
 		})
 
 		It("should update Deployment when AgentGateway replicas change", func() {
