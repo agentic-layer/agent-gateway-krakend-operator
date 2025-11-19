@@ -21,7 +21,7 @@ import (
 	"context"
 	"time"
 
-	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,7 +39,7 @@ func FetchService(ctx context.Context, k8sClient client.Client, name, namespace 
 		Name:      name,
 		Namespace: namespace,
 	}, service)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	return service
 }
 
@@ -50,20 +50,20 @@ func FetchAgentGateway(ctx context.Context, k8sClient client.Client, name, names
 		Name:      name,
 		Namespace: namespace,
 	}, agentGateway)
-	Expect(err).NotTo(HaveOccurred())
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	return agentGateway
 }
 
 // EventuallyResourceExists waits for a Kubernetes resource to exist using Eventually.
 // It polls the API until the resource is found or the timeout is reached.
 func EventuallyResourceExists(ctx context.Context, k8sClient client.Client, name, namespace string, obj client.Object, timeout, interval time.Duration) {
-	Eventually(func() bool {
+	gomega.Eventually(func() bool {
 		err := k8sClient.Get(ctx, types.NamespacedName{
 			Name:      name,
 			Namespace: namespace,
 		}, obj)
 		return err == nil
-	}, timeout, interval).Should(BeTrue())
+	}, timeout, interval).Should(gomega.BeTrue())
 }
 
 // ReconcileAndExpectSuccess invokes the reconciler and asserts successful reconciliation.
@@ -77,8 +77,8 @@ func ReconcileAndExpectSuccess(ctx context.Context, reconciler interface {
 			Namespace: namespace,
 		},
 	})
-	Expect(err).NotTo(HaveOccurred())
-	Expect(result).To(Equal(ctrl.Result{}))
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(result).To(gomega.Equal(ctrl.Result{}))
 }
 
 // Int32Ptr returns a pointer to an int32 value.
@@ -151,7 +151,7 @@ func CreateTestAgent(name, namespace string, exposed bool) *agentruntimev1alpha1
 // SetAgentUrl updates the agent's status URL and asserts the update succeeds.
 func SetAgentUrl(ctx context.Context, k8sClient client.Client, agent *agentruntimev1alpha1.Agent, url string) {
 	agent.Status.Url = url
-	Expect(k8sClient.Status().Update(ctx, agent)).To(Succeed())
+	gomega.Expect(k8sClient.Status().Update(ctx, agent)).To(gomega.Succeed())
 }
 
 // CleanupAllResources removes all test resources from the cluster.
