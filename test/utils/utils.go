@@ -24,8 +24,10 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2" // nolint:revive,staticcheck
+	. "github.com/onsi/gomega"    // nolint:revive,staticcheck
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -455,4 +457,73 @@ func PortForwardService(ctx context.Context, namespace, serviceName string, port
 
 	// Port forward to the resolved pod using the target port
 	return PortForwardPod(ctx, namespace, pod.Name, targetPort)
+}
+
+// MakeGatewayRequest establishes a port-forward to the service, makes an HTTP request, and cleans up.
+// The operation is wrapped in Eventually to handle transient network errors and pod restarts.
+// Non-2xx HTTP status codes are returned successfully (not treated as errors), allowing callers
+// to verify specific status codes like 404.
+func MakeGatewayRequest(
+	namespace, serviceName string,
+	servicePort int,
+	endpoint, method string,
+	payload interface{},
+	timeout, interval time.Duration,
+) (body []byte, statusCode int, err error) {
+	// Variables to capture results from the Eventually closure
+	var capturedBody []byte
+	var capturedStatusCode int
+
+	// Eventually will retry until the function returns nil (success) or timeout occurs
+	Eventually(func() error {
+		// Create fresh port-forward for this request
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		localPort, pfErr := PortForwardService(ctx, namespace, serviceName, servicePort)
+		if pfErr != nil {
+			return fmt.Errorf("port-forward failed: %w", pfErr)
+		}
+
+		url := fmt.Sprintf("http://localhost:%d%s", localPort, endpoint)
+
+		// Make the actual HTTP request based on method
+		var httpErr error
+		if method == "POST" {
+			capturedBody, capturedStatusCode, httpErr = PostRequestWithStatus(url, payload)
+		} else {
+			capturedBody, capturedStatusCode, httpErr = GetRequestWithStatus(url)
+		}
+
+		// Return the HTTP error (if any) so Eventually can retry on connection errors
+		// If httpErr is nil (HTTP request succeeded with any status code), Eventually succeeds
+		return httpErr
+	}, timeout, interval).Should(Succeed())
+
+	// If we reach here, Eventually succeeded (function returned nil)
+	// Return the captured values with nil error
+	return capturedBody, capturedStatusCode, nil
+}
+
+// MakeGatewayGet is a convenience wrapper for GET requests to the gateway with default timeout.
+func MakeGatewayGet(namespace, serviceName string, servicePort int, endpoint string) ([]byte, int, error) {
+	return MakeGatewayRequest(
+		namespace, serviceName, servicePort,
+		endpoint, "GET", nil,
+		2*time.Minute, 5*time.Second,
+	)
+}
+
+// MakeGatewayPost is a convenience wrapper for POST requests to the gateway with default timeout.
+func MakeGatewayPost(
+	namespace, serviceName string,
+	servicePort int,
+	endpoint string,
+	payload interface{},
+) ([]byte, int, error) {
+	return MakeGatewayRequest(
+		namespace, serviceName, servicePort,
+		endpoint, "POST", payload,
+		2*time.Minute, 5*time.Second,
+	)
 }
