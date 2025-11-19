@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 
+	"github.com/agentic-layer/agent-gateway-krakend-operator/internal/controller/utils"
 	agentruntimev1alpha1 "github.com/agentic-layer/agent-runtime-operator/api/v1alpha1"
 )
 
@@ -59,13 +60,13 @@ var _ = Describe("AgentGateway Controller", func() {
 
 	AfterEach(func() {
 		// Clean up all resources
-		cleanupAllResources(ctx)
+		utils.CleanupAllResources(ctx, k8sClient)
 	})
 
 	Describe("shouldProcessAgentGateway", func() {
 		Context("when no AgentGatewayClass exists", func() {
 			It("should return false", func() {
-				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
+				agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 
 				responsible := reconciler.shouldProcessAgentGateway(ctx, agentGateway)
 
@@ -77,12 +78,12 @@ var _ = Describe("AgentGateway Controller", func() {
 			var agentGatewayClass *agentruntimev1alpha1.AgentGatewayClass
 
 			BeforeEach(func() {
-				agentGatewayClass = createTestAgentGatewayClass("single-class", "test-controller")
+				agentGatewayClass = utils.CreateTestAgentGatewayClass("single-class", "test-controller")
 				Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 			})
 
 			It("should return false when no className specified and no default class", func() {
-				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
+				agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 
 				responsible := reconciler.shouldProcessAgentGateway(ctx, agentGateway)
 
@@ -92,7 +93,7 @@ var _ = Describe("AgentGateway Controller", func() {
 
 			It("should return false when className doesn't match controller", func() {
 				className := "single-class"
-				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, &className)
+				agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, &className)
 
 				responsible := reconciler.shouldProcessAgentGateway(ctx, agentGateway)
 
@@ -102,7 +103,7 @@ var _ = Describe("AgentGateway Controller", func() {
 
 			It("should return false when className doesn't exist", func() {
 				className := differentClassName
-				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, &className)
+				agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, &className)
 
 				responsible := reconciler.shouldProcessAgentGateway(ctx, agentGateway)
 
@@ -114,13 +115,13 @@ var _ = Describe("AgentGateway Controller", func() {
 			var agentGatewayClass *agentruntimev1alpha1.AgentGatewayClass
 
 			BeforeEach(func() {
-				agentGatewayClass = createTestAgentGatewayClass("krakend-class", ControllerName)
+				agentGatewayClass = utils.CreateTestAgentGatewayClass("krakend-class", ControllerName)
 				Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 			})
 
 			It("should return true when className matches", func() {
 				className := "krakend-class"
-				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, &className)
+				agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, &className)
 
 				responsible := reconciler.shouldProcessAgentGateway(ctx, agentGateway)
 
@@ -128,7 +129,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			})
 
 			It("should return false when no className and no default annotation", func() {
-				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
+				agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 
 				responsible := reconciler.shouldProcessAgentGateway(ctx, agentGateway)
 
@@ -140,12 +141,12 @@ var _ = Describe("AgentGateway Controller", func() {
 			var agentGatewayClass *agentruntimev1alpha1.AgentGatewayClass
 
 			BeforeEach(func() {
-				agentGatewayClass = createTestAgentGatewayClassWithDefault("default-class")
+				agentGatewayClass = utils.CreateTestAgentGatewayClassWithDefault("default-class", ControllerName)
 				Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 			})
 
 			It("should return true when no className specified", func() {
-				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
+				agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 
 				responsible := reconciler.shouldProcessAgentGateway(ctx, agentGateway)
 
@@ -155,8 +156,8 @@ var _ = Describe("AgentGateway Controller", func() {
 
 		Context("when multiple AgentGatewayClasses exist", func() {
 			BeforeEach(func() {
-				class1 := createTestAgentGatewayClass("class1", "controller1")
-				class2 := createTestAgentGatewayClass("class2", "controller2")
+				class1 := utils.CreateTestAgentGatewayClass("class1", "controller1")
+				class2 := utils.CreateTestAgentGatewayClass("class2", "controller2")
 
 				Expect(k8sClient.Create(ctx, class1)).To(Succeed())
 				Expect(k8sClient.Create(ctx, class2)).To(Succeed())
@@ -164,7 +165,7 @@ var _ = Describe("AgentGateway Controller", func() {
 
 			It("should return false when AgentGateway className doesn't match controller", func() {
 				className := "class1"
-				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, &className)
+				agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, &className)
 
 				responsible := reconciler.shouldProcessAgentGateway(ctx, agentGateway)
 
@@ -174,7 +175,7 @@ var _ = Describe("AgentGateway Controller", func() {
 
 			It("should return false when AgentGateway className doesn't exist", func() {
 				className := differentClassName
-				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, &className)
+				agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, &className)
 
 				responsible := reconciler.shouldProcessAgentGateway(ctx, agentGateway)
 
@@ -182,7 +183,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			})
 
 			It("should return false when AgentGateway has no className", func() {
-				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
+				agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 
 				responsible := reconciler.shouldProcessAgentGateway(ctx, agentGateway)
 
@@ -215,29 +216,24 @@ var _ = Describe("AgentGateway Controller", func() {
 		Context("when controller is not responsible", func() {
 			BeforeEach(func() {
 				// Create multiple AgentGatewayClasses
-				class1 := createTestAgentGatewayClass("class1", "controller1")
-				class2 := createTestAgentGatewayClass("class2", "controller2")
+				class1 := utils.CreateTestAgentGatewayClass("class1", "controller1")
+				class2 := utils.CreateTestAgentGatewayClass("class2", "controller2")
 				Expect(k8sClient.Create(ctx, class1)).To(Succeed())
 				Expect(k8sClient.Create(ctx, class2)).To(Succeed())
 
 				// Create AgentGateway with non-matching className
 				className := differentClassName
-				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, &className)
+				agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, &className)
 				Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
 			})
 
 			It("should skip reconciliation and return success", func() {
-				result, err := reconciler.Reconcile(ctx, ctrl.Request{
-					NamespacedName: namespacedName,
-				})
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal(ctrl.Result{}))
+				utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
 
 				// Verify no resources were created
 				configMapName := agentGatewayName + "-krakend-config"
 				configMap := &corev1.ConfigMap{}
-				err = k8sClient.Get(ctx, types.NamespacedName{
+				err := k8sClient.Get(ctx, types.NamespacedName{
 					Name:      configMapName,
 					Namespace: agentGatewayNamespace,
 				}, configMap)
@@ -248,57 +244,34 @@ var _ = Describe("AgentGateway Controller", func() {
 		Context("when controller is responsible", func() {
 			BeforeEach(func() {
 				// Create single AgentGatewayClass with default annotation and correct controller
-				agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+				agentGatewayClass := utils.CreateTestAgentGatewayClassWithDefault("default-class", ControllerName)
 				Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 
 				// Create AgentGateway
-				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
+				agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 				Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
 			})
 
 			It("should successfully reconcile and create resources", func() {
-				result, err := reconciler.Reconcile(ctx, ctrl.Request{
-					NamespacedName: namespacedName,
-				})
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal(ctrl.Result{}))
+				utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
 
 				// Verify ConfigMap was created
 				configMapName := agentGatewayName + "-krakend-config"
 				configMap := &corev1.ConfigMap{}
-				Eventually(func() bool {
-					err := k8sClient.Get(ctx, types.NamespacedName{
-						Name:      configMapName,
-						Namespace: agentGatewayNamespace,
-					}, configMap)
-					return err == nil
-				}, timeout, interval).Should(BeTrue())
+				utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
 
 				// Verify Deployment was created
 				deployment := &appsv1.Deployment{}
-				Eventually(func() bool {
-					err := k8sClient.Get(ctx, types.NamespacedName{
-						Name:      agentGatewayName,
-						Namespace: agentGatewayNamespace,
-					}, deployment)
-					return err == nil
-				}, timeout, interval).Should(BeTrue())
+				utils.EventuallyResourceExists(ctx, k8sClient, agentGatewayName, agentGatewayNamespace, deployment, timeout, interval)
 
 				// Verify Deployment properties
-				Expect(deployment.Spec.Replicas).To(Equal(int32Ptr(2)))
+				Expect(deployment.Spec.Replicas).To(Equal(utils.Int32Ptr(2)))
 				Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(1))
 				Expect(deployment.Spec.Template.Spec.Containers[0].Name).To(Equal("agent-gateway"))
 
 				// Verify Service was created
 				service := &corev1.Service{}
-				Eventually(func() bool {
-					err := k8sClient.Get(ctx, types.NamespacedName{
-						Name:      agentGatewayName,
-						Namespace: agentGatewayNamespace,
-					}, service)
-					return err == nil
-				}, timeout, interval).Should(BeTrue())
+				utils.EventuallyResourceExists(ctx, k8sClient, agentGatewayName, agentGatewayNamespace, service, timeout, interval)
 
 				// Verify Service properties
 				Expect(service.Spec.Type).To(Equal(corev1.ServiceTypeClusterIP))
@@ -314,7 +287,7 @@ var _ = Describe("AgentGateway Controller", func() {
 		Context("when AgentGateway has specific configuration", func() {
 			BeforeEach(func() {
 				// Create single AgentGatewayClass with default annotation and correct controller
-				agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+				agentGatewayClass := utils.CreateTestAgentGatewayClassWithDefault("default-class", ControllerName)
 				Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 
 				// Create AgentGateway with custom configuration
@@ -324,7 +297,7 @@ var _ = Describe("AgentGateway Controller", func() {
 						Namespace: agentGatewayNamespace,
 					},
 					Spec: agentruntimev1alpha1.AgentGatewaySpec{
-						Replicas: int32Ptr(3),
+						Replicas: utils.Int32Ptr(3),
 						Timeout:  &metav1.Duration{Duration: 30 * time.Second},
 					},
 				}
@@ -332,23 +305,12 @@ var _ = Describe("AgentGateway Controller", func() {
 			})
 
 			It("should create deployment with custom replica count", func() {
-				result, err := reconciler.Reconcile(ctx, ctrl.Request{
-					NamespacedName: namespacedName,
-				})
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal(ctrl.Result{}))
+				utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
 
 				deployment := &appsv1.Deployment{}
-				Eventually(func() bool {
-					err := k8sClient.Get(ctx, types.NamespacedName{
-						Name:      agentGatewayName,
-						Namespace: agentGatewayNamespace,
-					}, deployment)
-					return err == nil
-				}, timeout, interval).Should(BeTrue())
+				utils.EventuallyResourceExists(ctx, k8sClient, agentGatewayName, agentGatewayNamespace, deployment, timeout, interval)
 
-				Expect(deployment.Spec.Replicas).To(Equal(int32Ptr(3)))
+				Expect(deployment.Spec.Replicas).To(Equal(utils.Int32Ptr(3)))
 			})
 		})
 	})
@@ -361,11 +323,11 @@ var _ = Describe("AgentGateway Controller", func() {
 
 		BeforeEach(func() {
 			// Create single AgentGatewayClass with default annotation and correct controller
-			agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+			agentGatewayClass := utils.CreateTestAgentGatewayClassWithDefault("default-class", ControllerName)
 			Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 
 			// Create AgentGateway
-			agentGateway = createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
+			agentGateway = utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 			Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
 
 			serviceName = agentGateway.Name
@@ -376,12 +338,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify Service was created
-			service := &corev1.Service{}
-			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name:      serviceName,
-				Namespace: agentGatewayNamespace,
-			}, service)
-			Expect(err).NotTo(HaveOccurred())
+			service := utils.FetchService(ctx, k8sClient, serviceName, agentGatewayNamespace)
 
 			// Verify Service properties
 			Expect(service.Name).To(Equal(serviceName))
@@ -400,12 +357,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			err := reconciler.ensureService(ctx, agentGateway)
 			Expect(err).NotTo(HaveOccurred())
 
-			service := &corev1.Service{}
-			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name:      serviceName,
-				Namespace: agentGatewayNamespace,
-			}, service)
-			Expect(err).NotTo(HaveOccurred())
+			service := utils.FetchService(ctx, k8sClient, serviceName, agentGatewayNamespace)
 
 			// Verify labels
 			Expect(service.Labels).To(HaveKeyWithValue("app", agentGateway.Name))
@@ -419,12 +371,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			err := reconciler.ensureService(ctx, agentGateway)
 			Expect(err).NotTo(HaveOccurred())
 
-			service := &corev1.Service{}
-			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name:      serviceName,
-				Namespace: agentGatewayNamespace,
-			}, service)
-			Expect(err).NotTo(HaveOccurred())
+			service := utils.FetchService(ctx, k8sClient, serviceName, agentGatewayNamespace)
 
 			// Verify owner reference
 			Expect(service.OwnerReferences).To(HaveLen(1))
@@ -440,12 +387,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Get the service and record its creation timestamp and resource version
-			service := &corev1.Service{}
-			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name:      serviceName,
-				Namespace: agentGatewayNamespace,
-			}, service)
-			Expect(err).NotTo(HaveOccurred())
+			service := utils.FetchService(ctx, k8sClient, serviceName, agentGatewayNamespace)
 			creationTimestamp := service.CreationTimestamp
 			resourceVersion := service.ResourceVersion
 
@@ -454,12 +396,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify Service wasn't updated (resource version should be the same)
-			updatedService := &corev1.Service{}
-			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name:      serviceName,
-				Namespace: agentGatewayNamespace,
-			}, updatedService)
-			Expect(err).NotTo(HaveOccurred())
+			updatedService := utils.FetchService(ctx, k8sClient, serviceName, agentGatewayNamespace)
 			Expect(updatedService.CreationTimestamp).To(Equal(creationTimestamp))
 			Expect(updatedService.ResourceVersion).To(Equal(resourceVersion))
 		})
@@ -475,12 +412,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Manually create a service with different labels
-			existingService := &corev1.Service{}
-			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name:      serviceName,
-				Namespace: agentGatewayNamespace,
-			}, existingService)
-			Expect(err).NotTo(HaveOccurred())
+			existingService := utils.FetchService(ctx, k8sClient, serviceName, agentGatewayNamespace)
 
 			// Change the labels to something different
 			existingService.Labels = map[string]string{"app": "different-value"}
@@ -492,12 +424,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify Service was updated with correct labels
-			updatedService := &corev1.Service{}
-			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name:      serviceName,
-				Namespace: agentGatewayNamespace,
-			}, updatedService)
-			Expect(err).NotTo(HaveOccurred())
+			updatedService := utils.FetchService(ctx, k8sClient, serviceName, agentGatewayNamespace)
 			Expect(updatedService.Labels).To(HaveKeyWithValue("app", agentGateway.Name))
 		})
 
@@ -507,12 +434,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Manually modify the service ports
-			existingService := &corev1.Service{}
-			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name:      serviceName,
-				Namespace: agentGatewayNamespace,
-			}, existingService)
-			Expect(err).NotTo(HaveOccurred())
+			existingService := utils.FetchService(ctx, k8sClient, serviceName, agentGatewayNamespace)
 
 			// Change port configuration
 			existingService.Spec.Ports[0].Port = 9999
@@ -524,12 +446,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify Service was updated with correct port
-			updatedService := &corev1.Service{}
-			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name:      serviceName,
-				Namespace: agentGatewayNamespace,
-			}, updatedService)
-			Expect(err).NotTo(HaveOccurred())
+			updatedService := utils.FetchService(ctx, k8sClient, serviceName, agentGatewayNamespace)
 			Expect(updatedService.Spec.Ports).To(HaveLen(1))
 			Expect(updatedService.Spec.Ports[0].Port).To(Equal(int32(10000)))
 		})
@@ -540,12 +457,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Manually modify the service selector
-			existingService := &corev1.Service{}
-			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name:      serviceName,
-				Namespace: agentGatewayNamespace,
-			}, existingService)
-			Expect(err).NotTo(HaveOccurred())
+			existingService := utils.FetchService(ctx, k8sClient, serviceName, agentGatewayNamespace)
 
 			// Change selector
 			existingService.Spec.Selector = map[string]string{"app": "wrong-selector"}
@@ -557,12 +469,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			// Verify Service was updated with correct selector
-			updatedService := &corev1.Service{}
-			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name:      serviceName,
-				Namespace: agentGatewayNamespace,
-			}, updatedService)
-			Expect(err).NotTo(HaveOccurred())
+			updatedService := utils.FetchService(ctx, k8sClient, serviceName, agentGatewayNamespace)
 			Expect(updatedService.Spec.Selector).To(HaveKeyWithValue("app", agentGateway.Name))
 		})
 	})
@@ -701,40 +608,26 @@ var _ = Describe("AgentGateway Controller", func() {
 	Describe("Integration with Agent resources", func() {
 		BeforeEach(func() {
 			// Create single AgentGatewayClass with default annotation and correct controller
-			agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+			agentGatewayClass := utils.CreateTestAgentGatewayClassWithDefault("default-class", ControllerName)
 			Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 
 			// Create AgentGateway
-			agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
+			agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 			Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
 
 			// Create exposed Agent
-			agent := createTestAgent("test-agent", agentGatewayNamespace, true)
+			agent := utils.CreateTestAgent("test-agent", agentGatewayNamespace, true)
 			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
-			setAgentUrl(agent, "http://test-agent-service.default.svc.cluster.local:8080/test-agent/.well-known/agent-card.json")
+			utils.SetAgentUrl(ctx, k8sClient, agent, "http://test-agent-service.default.svc.cluster.local:8080/test-agent/.well-known/agent-card.json")
 		})
 
 		It("should create ConfigMap with agent endpoints", func() {
-			result, err := reconciler.Reconcile(ctx, ctrl.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      agentGatewayName,
-					Namespace: agentGatewayNamespace,
-				},
-			})
-
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal(ctrl.Result{}))
+			utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
 
 			// Verify ConfigMap contains agent configuration
 			configMapName := agentGatewayName + "-krakend-config"
 			configMap := &corev1.ConfigMap{}
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      configMapName,
-					Namespace: agentGatewayNamespace,
-				}, configMap)
-				return err == nil
-			}, timeout, interval).Should(BeTrue())
+			utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
 
 			Expect(configMap.Data).To(HaveKey("krakend.json"))
 			krakendConfig := configMap.Data["krakend.json"]
@@ -744,29 +637,15 @@ var _ = Describe("AgentGateway Controller", func() {
 
 		It("should only include exposed agents in configuration", func() {
 			// Create a non-exposed agent
-			hiddenAgent := createTestAgent("hidden-agent", agentGatewayNamespace, false)
+			hiddenAgent := utils.CreateTestAgent("hidden-agent", agentGatewayNamespace, false)
 			Expect(k8sClient.Create(ctx, hiddenAgent)).To(Succeed())
 
-			result, err := reconciler.Reconcile(ctx, ctrl.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      agentGatewayName,
-					Namespace: agentGatewayNamespace,
-				},
-			})
-
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal(ctrl.Result{}))
+			utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
 
 			// Verify ConfigMap only contains exposed agent
 			configMapName := agentGatewayName + "-krakend-config"
 			configMap := &corev1.ConfigMap{}
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      configMapName,
-					Namespace: agentGatewayNamespace,
-				}, configMap)
-				return err == nil
-			}, timeout, interval).Should(BeTrue())
+			utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
 
 			krakendConfig := configMap.Data["krakend.json"]
 			Expect(krakendConfig).To(ContainSubstring("/test-agent"))
@@ -778,13 +657,13 @@ var _ = Describe("AgentGateway Controller", func() {
 		var agent *agentruntimev1alpha1.Agent
 
 		BeforeEach(func() {
-			agent = createTestAgent("test-agent", agentGatewayNamespace, true)
+			agent = utils.CreateTestAgent("test-agent", agentGatewayNamespace, true)
 			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
-			setAgentUrl(agent, "http://test-agent-service.default.svc.cluster.local:8080/.well-known/agent-card.json")
+			utils.SetAgentUrl(ctx, k8sClient, agent, "http://test-agent-service.default.svc.cluster.local:8080/.well-known/agent-card.json")
 		})
 
 		It("should return empty endpoints for agent without URL", func() {
-			agentWithoutUrl := createTestAgent("no-url-agent", agentGatewayNamespace, true)
+			agentWithoutUrl := utils.CreateTestAgent("no-url-agent", agentGatewayNamespace, true)
 			Expect(k8sClient.Create(ctx, agentWithoutUrl)).To(Succeed())
 
 			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithoutUrl)
@@ -823,9 +702,9 @@ var _ = Describe("AgentGateway Controller", func() {
 		It("should use custom URL from agent status and strip agent-card suffix", func() {
 			// Create agent with custom URL that includes a path and agent-card suffix
 			customUrl := "http://custom-backend.example.com:9000/api/v1/.well-known/agent-card.json"
-			agentWithCustomUrl := createTestAgent("custom-agent", agentGatewayNamespace, true)
+			agentWithCustomUrl := utils.CreateTestAgent("custom-agent", agentGatewayNamespace, true)
 			Expect(k8sClient.Create(ctx, agentWithCustomUrl)).To(Succeed())
-			setAgentUrl(agentWithCustomUrl, customUrl)
+			utils.SetAgentUrl(ctx, k8sClient, agentWithCustomUrl, customUrl)
 
 			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithCustomUrl)
 
@@ -850,9 +729,9 @@ var _ = Describe("AgentGateway Controller", func() {
 		It("should correctly parse URL with only agent-card suffix", func() {
 			// Create agent with URL that has only the agent-card suffix
 			noPathUrl := "http://backend.example.com:8080/.well-known/agent-card.json"
-			agentWithNoPath := createTestAgent("no-path-agent", agentGatewayNamespace, true)
+			agentWithNoPath := utils.CreateTestAgent("no-path-agent", agentGatewayNamespace, true)
 			Expect(k8sClient.Create(ctx, agentWithNoPath)).To(Succeed())
-			setAgentUrl(agentWithNoPath, noPathUrl)
+			utils.SetAgentUrl(ctx, k8sClient, agentWithNoPath, noPathUrl)
 
 			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithNoPath)
 
@@ -879,34 +758,20 @@ var _ = Describe("AgentGateway Controller", func() {
 		Context("when getExposedAgents fails", func() {
 			It("should handle listing error gracefully", func() {
 				// Create single AgentGatewayClass with default annotation and correct controller
-				agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+				agentGatewayClass := utils.CreateTestAgentGatewayClassWithDefault("default-class", ControllerName)
 				Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 
 				// Create AgentGateway
-				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
+				agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 				Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
 
 				// Test with empty list (no agents) - should succeed with empty config
-				result, err := reconciler.Reconcile(ctx, ctrl.Request{
-					NamespacedName: types.NamespacedName{
-						Name:      agentGatewayName,
-						Namespace: agentGatewayNamespace,
-					},
-				})
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal(ctrl.Result{}))
+				utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
 
 				// Verify ConfigMap was created but with empty endpoints
 				configMapName := agentGatewayName + "-krakend-config"
 				configMap := &corev1.ConfigMap{}
-				Eventually(func() bool {
-					err := k8sClient.Get(ctx, types.NamespacedName{
-						Name:      configMapName,
-						Namespace: agentGatewayNamespace,
-					}, configMap)
-					return err == nil
-				}, timeout, interval).Should(BeTrue())
+				utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
 
 				Expect(configMap.Data).To(HaveKey("krakend.json"))
 			})
@@ -915,11 +780,11 @@ var _ = Describe("AgentGateway Controller", func() {
 		Context("when Service creation fails", func() {
 			BeforeEach(func() {
 				// Create single AgentGatewayClass with default annotation and correct controller
-				agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+				agentGatewayClass := utils.CreateTestAgentGatewayClassWithDefault("default-class", ControllerName)
 				Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 
 				// Create AgentGateway
-				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
+				agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 				Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
 			})
 
@@ -942,27 +807,18 @@ var _ = Describe("AgentGateway Controller", func() {
 				Expect(k8sClient.Create(ctx, conflictingService)).To(Succeed())
 
 				// Now try to reconcile - the ensureService should not fail but should detect existing service
-				result, err := reconciler.Reconcile(ctx, ctrl.Request{
-					NamespacedName: types.NamespacedName{
-						Name:      agentGatewayName,
-						Namespace: agentGatewayNamespace,
-					},
-				})
-
-				// Should succeed because ensureService doesn't update existing services
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal(ctrl.Result{}))
+				utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
 			})
 		})
 
 		Context("when ConfigMap creation fails", func() {
 			BeforeEach(func() {
 				// Create single AgentGatewayClass with default annotation and correct controller
-				agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+				agentGatewayClass := utils.CreateTestAgentGatewayClassWithDefault("default-class", ControllerName)
 				Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 
 				// Create AgentGateway
-				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
+				agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 				Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
 			})
 		})
@@ -970,12 +826,12 @@ var _ = Describe("AgentGateway Controller", func() {
 		Context("when Deployment creation fails", func() {
 			BeforeEach(func() {
 				// Create single AgentGatewayClass with default annotation and correct controller
-				agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+				agentGatewayClass := utils.CreateTestAgentGatewayClassWithDefault("default-class", ControllerName)
 				Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 
 				// Create AgentGateway with extremely long name that will cause issues
 				longName := "this-is-a-very-long-name-that-exceeds-kubernetes-resource-name-limits-and-should-cause-validation-errors"
-				agentGateway := createTestAgentGateway(longName, agentGatewayNamespace, nil)
+				agentGateway := utils.CreateTestAgentGateway(longName, agentGatewayNamespace, nil)
 				Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
 			})
 
@@ -1003,40 +859,26 @@ var _ = Describe("AgentGateway Controller", func() {
 		Context("when multiple default AgentGatewayClasses exist", func() {
 			BeforeEach(func() {
 				// Create two AgentGatewayClasses with default annotation and correct controller
-				agentGatewayClass1 := createTestAgentGatewayClassWithDefault("default-class-1")
+				agentGatewayClass1 := utils.CreateTestAgentGatewayClassWithDefault("default-class-1", ControllerName)
 				Expect(k8sClient.Create(ctx, agentGatewayClass1)).To(Succeed())
 
-				agentGatewayClass2 := createTestAgentGatewayClassWithDefault("default-class-2")
+				agentGatewayClass2 := utils.CreateTestAgentGatewayClassWithDefault("default-class-2", ControllerName)
 				Expect(k8sClient.Create(ctx, agentGatewayClass2)).To(Succeed())
 
 				// Create AgentGateway without className
-				agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
+				agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 				Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
 			})
 
 			It("should process AgentGateway when multiple defaults exist", func() {
 				// The controller should still process the AgentGateway even with multiple defaults
 				// It uses the first default it finds
-				result, err := reconciler.Reconcile(ctx, ctrl.Request{
-					NamespacedName: types.NamespacedName{
-						Name:      agentGatewayName,
-						Namespace: agentGatewayNamespace,
-					},
-				})
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(Equal(ctrl.Result{}))
+				utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
 
 				// Verify resources were created
 				configMapName := agentGatewayName + "-krakend-config"
 				configMap := &corev1.ConfigMap{}
-				Eventually(func() bool {
-					err := k8sClient.Get(ctx, types.NamespacedName{
-						Name:      configMapName,
-						Namespace: agentGatewayNamespace,
-					}, configMap)
-					return err == nil
-				}, timeout, interval).Should(BeTrue())
+				utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
 			})
 		})
 	})
@@ -1049,47 +891,33 @@ var _ = Describe("AgentGateway Controller", func() {
 
 		BeforeEach(func() {
 			// Create single AgentGatewayClass with default annotation and correct controller
-			agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+			agentGatewayClass := utils.CreateTestAgentGatewayClassWithDefault("default-class", ControllerName)
 			Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 
 			// Create AgentGateway
-			agentGateway = createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
+			agentGateway = utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 			Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
 
 			// Create exposed Agent
-			agent = createTestAgent("test-agent", agentGatewayNamespace, true)
+			agent = utils.CreateTestAgent("test-agent", agentGatewayNamespace, true)
 			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
-			setAgentUrl(agent, "http://test-agent-service.default.svc.cluster.local:8080/.well-known/agent-card.json")
+			utils.SetAgentUrl(ctx, k8sClient, agent, "http://test-agent-service.default.svc.cluster.local:8080/.well-known/agent-card.json")
 		})
 
 		It("should generate valid KrakenD JSON configuration", func() {
-			result, err := reconciler.Reconcile(ctx, ctrl.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      agentGatewayName,
-					Namespace: agentGatewayNamespace,
-				},
-			})
-
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal(ctrl.Result{}))
+			utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
 
 			// Verify ConfigMap contains valid JSON
 			configMapName := agentGatewayName + "-krakend-config"
 			configMap := &corev1.ConfigMap{}
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      configMapName,
-					Namespace: agentGatewayNamespace,
-				}, configMap)
-				return err == nil
-			}, timeout, interval).Should(BeTrue())
+			utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
 
 			krakendConfig := configMap.Data["krakend.json"]
 			Expect(krakendConfig).NotTo(BeEmpty())
 
 			// Validate it's valid JSON
 			var jsonData map[string]interface{}
-			err = json.Unmarshal([]byte(krakendConfig), &jsonData)
+			err := json.Unmarshal([]byte(krakendConfig), &jsonData)
 			Expect(err).NotTo(HaveOccurred(), "ConfigMap should contain valid JSON")
 
 			// Validate specific KrakenD fields
@@ -1119,15 +947,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			agentGateway.Spec.Timeout = &metav1.Duration{Duration: 45 * time.Second}
 			Expect(k8sClient.Update(ctx, agentGateway)).To(Succeed())
 
-			result, err := reconciler.Reconcile(ctx, ctrl.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      agentGatewayName,
-					Namespace: agentGatewayNamespace,
-				},
-			})
-
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal(ctrl.Result{}))
+			utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
 
 			// Verify ConfigMap contains custom timeout
 			configMapName := agentGatewayName + "-krakend-config"
@@ -1142,37 +962,23 @@ var _ = Describe("AgentGateway Controller", func() {
 
 			krakendConfig := configMap.Data["krakend.json"]
 			var jsonData map[string]interface{}
-			err = json.Unmarshal([]byte(krakendConfig), &jsonData)
+			err := json.Unmarshal([]byte(krakendConfig), &jsonData)
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(jsonData["timeout"]).To(Equal("45s"))
 		})
 
 		It("should generate proper service URLs for agents", func() {
-			result, err := reconciler.Reconcile(ctx, ctrl.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      agentGatewayName,
-					Namespace: agentGatewayNamespace,
-				},
-			})
-
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal(ctrl.Result{}))
+			utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
 
 			// Verify ConfigMap contains proper service URL
 			configMapName := agentGatewayName + "-krakend-config"
 			configMap := &corev1.ConfigMap{}
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      configMapName,
-					Namespace: agentGatewayNamespace,
-				}, configMap)
-				return err == nil
-			}, timeout, interval).Should(BeTrue())
+			utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
 
 			krakendConfig := configMap.Data["krakend.json"]
 			var jsonData map[string]interface{}
-			err = json.Unmarshal([]byte(krakendConfig), &jsonData)
+			err := json.Unmarshal([]byte(krakendConfig), &jsonData)
 			Expect(err).NotTo(HaveOccurred())
 
 			endpoints := jsonData["endpoints"].([]interface{})
@@ -1190,34 +996,20 @@ var _ = Describe("AgentGateway Controller", func() {
 	Describe("Deployment validation", func() {
 		BeforeEach(func() {
 			// Create single AgentGatewayClass with default annotation and correct controller
-			agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+			agentGatewayClass := utils.CreateTestAgentGatewayClassWithDefault("default-class", ControllerName)
 			Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 
 			// Create AgentGateway
-			agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
+			agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 			Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
 		})
 
 		It("should create deployment with correct container configuration", func() {
-			result, err := reconciler.Reconcile(ctx, ctrl.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      agentGatewayName,
-					Namespace: agentGatewayNamespace,
-				},
-			})
-
-			Expect(err).NotTo(HaveOccurred())
-			Expect(result).To(Equal(ctrl.Result{}))
+			utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
 
 			// Verify Deployment configuration
 			deployment := &appsv1.Deployment{}
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      agentGatewayName,
-					Namespace: agentGatewayNamespace,
-				}, deployment)
-				return err == nil
-			}, timeout, interval).Should(BeTrue())
+			utils.EventuallyResourceExists(ctx, k8sClient, agentGatewayName, agentGatewayNamespace, deployment, timeout, interval)
 
 			// Validate container configuration
 			Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(1))
@@ -1260,36 +1052,19 @@ var _ = Describe("AgentGateway Controller", func() {
 
 			// Wait for deployment to be created
 			deployment := &appsv1.Deployment{}
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      agentGatewayName,
-					Namespace: agentGatewayNamespace,
-				}, deployment)
-				return err == nil
-			}, timeout, interval).Should(BeTrue())
+			utils.EventuallyResourceExists(ctx, k8sClient, agentGatewayName, agentGatewayNamespace, deployment, timeout, interval)
 
 			// Verify initial replica count
-			Expect(deployment.Spec.Replicas).To(Equal(int32Ptr(2)))
+			Expect(deployment.Spec.Replicas).To(Equal(utils.Int32Ptr(2)))
 
 			// Update AgentGateway replicas
-			agentGateway := &agentruntimev1alpha1.AgentGateway{}
-			err = k8sClient.Get(ctx, types.NamespacedName{
-				Name:      agentGatewayName,
-				Namespace: agentGatewayNamespace,
-			}, agentGateway)
-			Expect(err).NotTo(HaveOccurred())
+			agentGateway := utils.FetchAgentGateway(ctx, k8sClient, agentGatewayName, agentGatewayNamespace)
 
-			agentGateway.Spec.Replicas = int32Ptr(5)
+			agentGateway.Spec.Replicas = utils.Int32Ptr(5)
 			Expect(k8sClient.Update(ctx, agentGateway)).To(Succeed())
 
 			// Reconcile again
-			_, err = reconciler.Reconcile(ctx, ctrl.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      agentGatewayName,
-					Namespace: agentGatewayNamespace,
-				},
-			})
-			Expect(err).NotTo(HaveOccurred())
+			utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
 
 			// Verify deployment was updated
 			Eventually(func() bool {
@@ -1308,11 +1083,11 @@ var _ = Describe("AgentGateway Controller", func() {
 	Describe("Resource updates", func() {
 		BeforeEach(func() {
 			// Create single AgentGatewayClass with default annotation and correct controller
-			agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+			agentGatewayClass := utils.CreateTestAgentGatewayClassWithDefault("default-class", ControllerName)
 			Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 
 			// Create AgentGateway
-			agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
+			agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 			Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
 
 			// Initial reconciliation
@@ -1327,9 +1102,9 @@ var _ = Describe("AgentGateway Controller", func() {
 
 		It("should update ConfigMap when new agents are added", func() {
 			// Add a new exposed agent
-			agent := createTestAgent("new-agent", agentGatewayNamespace, true)
+			agent := utils.CreateTestAgent("new-agent", agentGatewayNamespace, true)
 			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
-			setAgentUrl(agent, "http://new-agent-service.default.svc.cluster.local:8080/.well-known/agent-card.json")
+			utils.SetAgentUrl(ctx, k8sClient, agent, "http://new-agent-service.default.svc.cluster.local:8080/.well-known/agent-card.json")
 
 			// Reconcile again
 			result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -1441,7 +1216,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			}, agentGateway)
 			Expect(err).NotTo(HaveOccurred())
 
-			agentGateway.Spec.Replicas = int32Ptr(5)
+			agentGateway.Spec.Replicas = utils.Int32Ptr(5)
 			Expect(k8sClient.Update(ctx, agentGateway)).To(Succeed())
 
 			// Reconcile again
@@ -1473,11 +1248,11 @@ var _ = Describe("AgentGateway Controller", func() {
 	Describe("Resource ownership and cleanup", func() {
 		BeforeEach(func() {
 			// Create single AgentGatewayClass with default annotation and correct controller
-			agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+			agentGatewayClass := utils.CreateTestAgentGatewayClassWithDefault("default-class", ControllerName)
 			Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 
 			// Create AgentGateway
-			agentGateway := createTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
+			agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
 			Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
 		})
 
@@ -1654,12 +1429,12 @@ var _ = Describe("findAgentGatewaysForAgent", func() {
 		}
 
 		// Create a test agent for use in all tests
-		agent = createTestAgent("test-agent", "default", true)
+		agent = utils.CreateTestAgent("test-agent", "default", true)
 		Expect(k8sClient.Create(ctx, agent)).To(Succeed())
 	})
 
 	AfterEach(func() {
-		cleanupAllResources(ctx)
+		utils.CleanupAllResources(ctx, k8sClient)
 	})
 
 	Context("when no AgentGateways exist", func() {
@@ -1672,10 +1447,10 @@ var _ = Describe("findAgentGatewaysForAgent", func() {
 	Context("when one AgentGateway exists", func() {
 		It("should return single reconcile request with correct NamespacedName", func() {
 			// Create default class and gateway
-			agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+			agentGatewayClass := utils.CreateTestAgentGatewayClassWithDefault("default-class", ControllerName)
 			Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 
-			agentGateway := createTestAgentGateway("test-gateway", "default", nil)
+			agentGateway := utils.CreateTestAgentGateway("test-gateway", "default", nil)
 			Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
 
 			// Wait for resources to be available
@@ -1699,15 +1474,15 @@ var _ = Describe("findAgentGatewaysForAgent", func() {
 	Context("when multiple AgentGateways exist in different namespaces", func() {
 		It("should return all gateways as reconcile requests", func() {
 			// Create default class
-			agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+			agentGatewayClass := utils.CreateTestAgentGatewayClassWithDefault("default-class", ControllerName)
 			Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 
 			// Create first gateway in default namespace
-			gateway1 := createTestAgentGateway("gateway-1", "default", nil)
+			gateway1 := utils.CreateTestAgentGateway("gateway-1", "default", nil)
 			Expect(k8sClient.Create(ctx, gateway1)).To(Succeed())
 
 			// Create second gateway in default namespace
-			gateway2 := createTestAgentGateway("gateway-2", "default", nil)
+			gateway2 := utils.CreateTestAgentGateway("gateway-2", "default", nil)
 			Expect(k8sClient.Create(ctx, gateway2)).To(Succeed())
 
 			// Create test namespace
@@ -1719,7 +1494,7 @@ var _ = Describe("findAgentGatewaysForAgent", func() {
 			Expect(k8sClient.Create(ctx, testNamespace)).To(Succeed())
 
 			// Create third gateway in test namespace
-			gateway3 := createTestAgentGateway("gateway-3", "test-namespace", nil)
+			gateway3 := utils.CreateTestAgentGateway("gateway-3", "test-namespace", nil)
 			Expect(k8sClient.Create(ctx, gateway3)).To(Succeed())
 
 			// Wait for all resources to be available
@@ -1751,14 +1526,14 @@ var _ = Describe("findAgentGatewaysForAgent", func() {
 	Context("when agent changes affect all gateways", func() {
 		It("should trigger reconciliation for all gateways regardless of agent namespace", func() {
 			// Create default class
-			agentGatewayClass := createTestAgentGatewayClassWithDefault("default-class")
+			agentGatewayClass := utils.CreateTestAgentGatewayClassWithDefault("default-class", ControllerName)
 			Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
 
 			// Create gateways
-			gateway1 := createTestAgentGateway("gateway-a", "default", nil)
+			gateway1 := utils.CreateTestAgentGateway("gateway-a", "default", nil)
 			Expect(k8sClient.Create(ctx, gateway1)).To(Succeed())
 
-			gateway2 := createTestAgentGateway("gateway-b", "default", nil)
+			gateway2 := utils.CreateTestAgentGateway("gateway-b", "default", nil)
 			Expect(k8sClient.Create(ctx, gateway2)).To(Succeed())
 
 			// Wait for resources
@@ -1779,7 +1554,7 @@ var _ = Describe("findAgentGatewaysForAgent", func() {
 			}
 			Expect(k8sClient.Create(ctx, testNamespace)).To(Succeed())
 
-			differentAgent := createTestAgent("different-agent", "agent-namespace", true)
+			differentAgent := utils.CreateTestAgent("different-agent", "agent-namespace", true)
 			Expect(k8sClient.Create(ctx, differentAgent)).To(Succeed())
 
 			// Even though agent is in different namespace, all gateways should be returned
@@ -1791,132 +1566,3 @@ var _ = Describe("findAgentGatewaysForAgent", func() {
 		})
 	})
 })
-
-func int32Ptr(i int32) *int32 {
-	return &i
-}
-
-// Helper functions for creating test resources
-
-func createTestAgentGateway(name, namespace string, className *string) *agentruntimev1alpha1.AgentGateway {
-	spec := agentruntimev1alpha1.AgentGatewaySpec{
-		Replicas: int32Ptr(2),
-	}
-
-	if className != nil {
-		spec.AgentGatewayClassName = *className
-	}
-
-	return &agentruntimev1alpha1.AgentGateway{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Spec: spec,
-	}
-}
-
-func createTestAgentGatewayClass(name, controller string) *agentruntimev1alpha1.AgentGatewayClass {
-	return &agentruntimev1alpha1.AgentGatewayClass{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-		},
-		Spec: agentruntimev1alpha1.AgentGatewayClassSpec{
-			Controller: controller,
-		},
-	}
-}
-
-func createTestAgentGatewayClassWithDefault(name string) *agentruntimev1alpha1.AgentGatewayClass {
-	return &agentruntimev1alpha1.AgentGatewayClass{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: name,
-			Annotations: map[string]string{
-				"agentgatewayclass.kubernetes.io/is-default-class": "true",
-			},
-		},
-		Spec: agentruntimev1alpha1.AgentGatewayClassSpec{
-			Controller: ControllerName,
-		},
-	}
-}
-
-func createTestAgent(name, namespace string, exposed bool) *agentruntimev1alpha1.Agent {
-	return &agentruntimev1alpha1.Agent{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: namespace,
-		},
-		Spec: agentruntimev1alpha1.AgentSpec{
-			Exposed: exposed,
-		},
-	}
-}
-
-// setAgentUrl updates the agent's status URL
-func setAgentUrl(agent *agentruntimev1alpha1.Agent, url string) {
-	agent.Status.Url = url
-	Expect(k8sClient.Status().Update(ctx, agent)).To(Succeed())
-}
-
-func cleanupAllResources(ctx context.Context) {
-	// Clean up AgentGateways
-	agentGatewayList := &agentruntimev1alpha1.AgentGatewayList{}
-	_ = k8sClient.List(ctx, agentGatewayList)
-	for i := range agentGatewayList.Items {
-		_ = k8sClient.Delete(ctx, &agentGatewayList.Items[i])
-	}
-
-	// Clean up AgentGatewayClasses
-	agentGatewayClassList := &agentruntimev1alpha1.AgentGatewayClassList{}
-	_ = k8sClient.List(ctx, agentGatewayClassList)
-	for i := range agentGatewayClassList.Items {
-		_ = k8sClient.Delete(ctx, &agentGatewayClassList.Items[i])
-	}
-
-	// Clean up Agents
-	agentList := &agentruntimev1alpha1.AgentList{}
-	_ = k8sClient.List(ctx, agentList)
-	for i := range agentList.Items {
-		_ = k8sClient.Delete(ctx, &agentList.Items[i])
-	}
-
-	// Clean up Services
-	serviceList := &corev1.ServiceList{}
-	_ = k8sClient.List(ctx, serviceList)
-	for i := range serviceList.Items {
-		if serviceList.Items[i].Name != "kubernetes" { // Don't delete the default kubernetes service
-			_ = k8sClient.Delete(ctx, &serviceList.Items[i])
-		}
-	}
-
-	// Clean up ConfigMaps
-	configMapList := &corev1.ConfigMapList{}
-	_ = k8sClient.List(ctx, configMapList)
-	for i := range configMapList.Items {
-		if !isSystemConfigMap(configMapList.Items[i].Name) {
-			_ = k8sClient.Delete(ctx, &configMapList.Items[i])
-		}
-	}
-
-	// Clean up Deployments
-	deploymentList := &appsv1.DeploymentList{}
-	_ = k8sClient.List(ctx, deploymentList)
-	for i := range deploymentList.Items {
-		_ = k8sClient.Delete(ctx, &deploymentList.Items[i])
-	}
-}
-
-func isSystemConfigMap(name string) bool {
-	systemConfigMaps := []string{
-		"kube-root-ca.crt",
-		"extension-apiserver-authentication",
-	}
-
-	for _, systemName := range systemConfigMaps {
-		if name == systemName {
-			return true
-		}
-	}
-	return false
-}
