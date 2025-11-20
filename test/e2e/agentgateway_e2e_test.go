@@ -18,7 +18,6 @@ package e2e
 
 import (
 	"encoding/json"
-	"fmt"
 	"os/exec"
 	"time"
 
@@ -45,13 +44,6 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		_, err := utils.Run(exec.Command("kubectl", "apply",
 			"-f", "config/samples/runtime_v1alpha1_gateway_with_agent.yaml"))
 		Expect(err).NotTo(HaveOccurred(), "Failed to apply agent and gateway samples")
-
-		By("waiting for gateway to have agent endpoints")
-		Eventually(func(g Gomega) {
-			_, _, err := utils.MakeServiceGet("default", "agent-gateway", 10000,
-				"/mocked-agent-exposed-1/.well-known/agent-card.json")
-			g.Expect(err).NotTo(HaveOccurred())
-		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Gateway should have agent endpoints after reconciliation")
 	})
 
 	AfterAll(func() {
@@ -61,7 +53,6 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 	})
 
 	It("should proxy A2A requests to agent", func() {
-
 		By("sending HTTP request to the gateway")
 		payload := map[string]interface{}{
 			"jsonrpc": "2.0",
@@ -84,8 +75,8 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		}
 
 		var body []byte
-		var statusCode int
 		Eventually(func(g Gomega) {
+			var statusCode int
 			var err error
 			body, statusCode, err = utils.MakeServicePost("default", "agent-gateway", 10000,
 				"/mocked-agent-exposed-1", payload)
@@ -103,8 +94,8 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		By("retrieving agent card from the gateway")
 
 		var body []byte
-		var statusCode int
 		Eventually(func(g Gomega) {
+			var statusCode int
 			var err error
 			body, statusCode, err = utils.MakeServiceGet("default", "agent-gateway", 10000,
 				"/mocked-agent-exposed-1/.well-known/agent-card.json")
@@ -112,63 +103,30 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 			g.Expect(statusCode).To(Equal(200))
 		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Failed to send GET request to agent-card endpoint")
 
+		By("verifying agent card URL")
 		var responseMap map[string]interface{}
 		err := json.Unmarshal(body, &responseMap)
 		Expect(err).NotTo(HaveOccurred(), "Failed to unmarshal agent card response")
-		Expect(responseMap["url"]).NotTo(BeEmpty(), "Agent card URL should not be empty")
 		Expect(responseMap["url"]).To(ContainSubstring("/mocked-agent-exposed-1"),
 			"Agent card URL should contain the agent path")
 	})
 
-	It("should reload when agent is deleted", func() {
-		By("verifying agent is accessible via agent card")
-		var statusCode int
-		Eventually(func(g Gomega) {
-			var err error
-			_, statusCode, err = utils.MakeServiceGet("default", "agent-gateway", 10000,
-				"/mocked-agent-exposed-1/.well-known/agent-card.json")
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(statusCode).To(Equal(200))
-		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Agent card should be accessible before deletion")
-
+	It("should return no agent card for deleted agents", func() {
 		By("deleting the agent")
 		err := utils.DeleteAgent("mocked-agent-exposed-1", "default")
 		Expect(err).NotTo(HaveOccurred(), "Failed to delete agent")
 
-		By("verifying deleted agent returns 404")
-		Eventually(func() error {
+		By("verifying agent-card returns 404")
+		Eventually(func(g Gomega) {
 			// Make request to check if gateway returns 404 for deleted agent
 			_, statusCode, err := utils.MakeServiceGet("default", "agent-gateway", 10000,
 				"/mocked-agent-exposed-1/.well-known/agent-card.json")
-			if err != nil {
-				// Connection/network error - retry
-				_, _ = fmt.Fprintf(GinkgoWriter, "Connection error (will retry): %v\n", err)
-				return fmt.Errorf("failed to connect to gateway: %w", err)
-			}
-			if statusCode == 404 {
-				// Success! Gateway correctly removed the deleted agent
-				return nil
-			}
-			if statusCode == 200 {
-				// Agent still exists in gateway config - needs more time to reconcile
-				return fmt.Errorf("expected 404 for deleted agent, but agent is still accessible (HTTP 200)")
-			}
-			// Unexpected status code
-			return fmt.Errorf("expected 404 for deleted agent, got unexpected status code: %d", statusCode)
+			g.Expect(err).NotTo(HaveOccurred(), "Failed to send GET request to agent gateway")
+			g.Expect(statusCode).To(Equal(404))
 		}, 3*time.Minute, 2*time.Second).Should(Succeed(), "Gateway should return 404 for deleted agent")
 	})
 
-	It("should reload when agent is added", func() {
-		By("verifying agent is not accessible (agent was deleted in previous test)")
-		var statusCode int
-		Eventually(func(g Gomega) {
-			var err error
-			_, statusCode, err = utils.MakeServiceGet("default", "agent-gateway", 10000,
-				"/mocked-agent-exposed-1/.well-known/agent-card.json")
-			g.Expect(err).NotTo(HaveOccurred())
-			g.Expect(statusCode).To(Equal(404))
-		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Should return 404 for non-existent agent")
-
+	It("should proxy added agents", func() {
 		By("adding the agent back")
 		_, err := utils.Run(exec.Command("kubectl", "apply",
 			"-f", "config/samples/runtime_v1alpha1_gateway_with_agent.yaml"))
@@ -178,6 +136,7 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		var body []byte
 		Eventually(func(g Gomega) {
 			var err error
+			var statusCode int
 			body, statusCode, err = utils.MakeServiceGet("default", "agent-gateway", 10000,
 				"/mocked-agent-exposed-1/.well-known/agent-card.json")
 			g.Expect(err).NotTo(HaveOccurred())
@@ -187,7 +146,6 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		var responseMap map[string]interface{}
 		err = json.Unmarshal(body, &responseMap)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(responseMap["url"]).NotTo(BeEmpty(), "Agent card URL should not be empty")
 		Expect(responseMap["url"]).To(ContainSubstring("/mocked-agent-exposed-1"),
 			"Agent card URL should contain the agent path")
 	})

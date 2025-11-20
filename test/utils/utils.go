@@ -415,7 +415,8 @@ func PortForwardPod(ctx context.Context, namespace, podName string, port int) (i
 	}
 	localPort := int(forwardedPorts[0].Local)
 
-	By(fmt.Sprintf("port-forward established: 127.0.0.1:%d -> %s/%s:%d", localPort, namespace, podName, port))
+	_, _ = fmt.Fprintf(GinkgoWriter, "port-forward established: 127.0.0.1:%d -> %s/%s:%d",
+		localPort, namespace, podName, port)
 
 	// Monitor context and stop port forwarding when canceled
 	go func() {
@@ -454,7 +455,8 @@ func PortForwardService(ctx context.Context, namespace, serviceName string, port
 		return 0, fmt.Errorf("failed to resolve service to pod: %w", err)
 	}
 
-	By(fmt.Sprintf("resolved service %s (port %d) to pod %s (port %d)", serviceName, port, pod.Name, targetPort))
+	_, _ = fmt.Fprintf(GinkgoWriter, "resolved service %s (port %d) to pod %s (port %d)",
+		serviceName, port, pod.Name, targetPort)
 
 	// Port forward to the resolved pod using the target port
 	return PortForwardPod(ctx, namespace, pod.Name, targetPort)
