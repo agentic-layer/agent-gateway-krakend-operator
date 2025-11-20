@@ -56,10 +56,10 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		}, 3*time.Minute, 5*time.Second).Should(Succeed(), "Agent gateway deployment should be ready")
 
 		By("waiting for gateway to have agent endpoints")
-		Eventually(func() error {
-			_, _, err := utils.MakeGatewayGet("default", "agent-gateway", 10000,
+		Eventually(func(g Gomega) {
+			_, _, err := utils.MakeServiceGet("default", "agent-gateway", 10000,
 				"/mocked-agent-exposed-1/.well-known/agent-card.json")
-			return err
+			g.Expect(err).NotTo(HaveOccurred())
 		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Gateway should have agent endpoints after reconciliation")
 	})
 
@@ -94,13 +94,13 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 
 		var body []byte
 		var statusCode int
-		Eventually(func() error {
+		Eventually(func(g Gomega) {
 			var err error
-			body, statusCode, err = utils.MakeGatewayPost("default", "agent-gateway", 10000,
+			body, statusCode, err = utils.MakeServicePost("default", "agent-gateway", 10000,
 				"/mocked-agent-exposed-1", payload)
-			return err
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(statusCode).To(Equal(200))
 		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Failed to send POST request to agent gateway")
-		Expect(statusCode).To(Equal(200), "Expected HTTP 200 status code")
 
 		var responseMap map[string]interface{}
 		err := json.Unmarshal(body, &responseMap)
@@ -113,13 +113,13 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 
 		var body []byte
 		var statusCode int
-		Eventually(func() error {
+		Eventually(func(g Gomega) {
 			var err error
-			body, statusCode, err = utils.MakeGatewayGet("default", "agent-gateway", 10000,
+			body, statusCode, err = utils.MakeServiceGet("default", "agent-gateway", 10000,
 				"/mocked-agent-exposed-1/.well-known/agent-card.json")
-			return err
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(statusCode).To(Equal(200))
 		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Failed to send GET request to agent-card endpoint")
-		Expect(statusCode).To(Equal(200), "Expected HTTP 200 status code")
 
 		var responseMap map[string]interface{}
 		err := json.Unmarshal(body, &responseMap)
@@ -132,13 +132,13 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 	It("should reload when agent is deleted", func() {
 		By("verifying agent is accessible via agent card")
 		var statusCode int
-		Eventually(func() error {
+		Eventually(func(g Gomega) {
 			var err error
-			_, statusCode, err = utils.MakeGatewayGet("default", "agent-gateway", 10000,
+			_, statusCode, err = utils.MakeServiceGet("default", "agent-gateway", 10000,
 				"/mocked-agent-exposed-1/.well-known/agent-card.json")
-			return err
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(statusCode).To(Equal(200))
 		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Agent card should be accessible before deletion")
-		Expect(statusCode).To(Equal(200), "Expected HTTP 200 status code of agent")
 
 		By("deleting the agent")
 		err := utils.DeleteAgent("mocked-agent-exposed-1", "default")
@@ -147,7 +147,7 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		By("verifying deleted agent returns 404")
 		Eventually(func() error {
 			// Make request to check if gateway returns 404 for deleted agent
-			_, statusCode, err := utils.MakeGatewayGet("default", "agent-gateway", 10000,
+			_, statusCode, err := utils.MakeServiceGet("default", "agent-gateway", 10000,
 				"/mocked-agent-exposed-1/.well-known/agent-card.json")
 			if err != nil {
 				// Connection/network error - retry
@@ -177,13 +177,13 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 	It("should reload when agent is added", func() {
 		By("verifying agent is not accessible (agent was deleted in previous test)")
 		var statusCode int
-		Eventually(func() error {
+		Eventually(func(g Gomega) {
 			var err error
-			_, statusCode, err = utils.MakeGatewayGet("default", "agent-gateway", 10000,
+			_, statusCode, err = utils.MakeServiceGet("default", "agent-gateway", 10000,
 				"/mocked-agent-exposed-1/.well-known/agent-card.json")
-			return err
-		}, 2*time.Minute, 5*time.Second).Should(Succeed())
-		Expect(statusCode).To(Equal(404), "Should return 404 for non-existent agent")
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(statusCode).To(Equal(404))
+		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Should return 404 for non-existent agent")
 
 		By("adding the agent back")
 		_, err := utils.Run(exec.Command("kubectl", "apply",
@@ -196,13 +196,13 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 
 		By("verifying agent card is accessible and has correct URL")
 		var body []byte
-		Eventually(func() error {
+		Eventually(func(g Gomega) {
 			var err error
-			body, statusCode, err = utils.MakeGatewayGet("default", "agent-gateway", 10000,
+			body, statusCode, err = utils.MakeServiceGet("default", "agent-gateway", 10000,
 				"/mocked-agent-exposed-1/.well-known/agent-card.json")
-			return err
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(statusCode).To(Equal(200))
 		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Agent card should be accessible")
-		Expect(statusCode).To(Equal(200), "Expected HTTP 200 status code")
 
 		var responseMap map[string]interface{}
 		err = json.Unmarshal(body, &responseMap)

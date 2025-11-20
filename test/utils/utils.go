@@ -460,11 +460,11 @@ func PortForwardService(ctx context.Context, namespace, serviceName string, port
 	return PortForwardPod(ctx, namespace, pod.Name, targetPort)
 }
 
-// MakeGatewayRequest establishes a port-forward to the service, makes an HTTP request, and cleans up.
+// MakeServiceRequest establishes a port-forward to the service, makes an HTTP request, and cleans up.
 // The requestFunc receives the base URL (e.g., "http://localhost:12345") and performs the actual request.
 // Non-2xx HTTP status codes are returned successfully (not treated as errors), allowing callers
 // to verify specific status codes like 404.
-func MakeGatewayRequest(
+func MakeServiceRequest(
 	namespace, serviceName string,
 	servicePort int,
 	requestFunc RequestFunc,
@@ -482,9 +482,9 @@ func MakeGatewayRequest(
 	return requestFunc(baseURL)
 }
 
-// MakeGatewayGet is a convenience wrapper for GET requests to the gateway.
-func MakeGatewayGet(namespace, serviceName string, servicePort int, endpoint string) ([]byte, int, error) {
-	return MakeGatewayRequest(
+// MakeServiceGet is a convenience wrapper for GET requests to a Kubernetes service.
+func MakeServiceGet(namespace, serviceName string, servicePort int, endpoint string) ([]byte, int, error) {
+	return MakeServiceRequest(
 		namespace, serviceName, servicePort,
 		func(baseURL string) ([]byte, int, error) {
 			return GetRequestWithStatus(baseURL + endpoint)
@@ -492,14 +492,14 @@ func MakeGatewayGet(namespace, serviceName string, servicePort int, endpoint str
 	)
 }
 
-// MakeGatewayPost is a convenience wrapper for POST requests to the gateway.
-func MakeGatewayPost(
+// MakeServicePost is a convenience wrapper for POST requests to a Kubernetes service.
+func MakeServicePost(
 	namespace, serviceName string,
 	servicePort int,
 	endpoint string,
 	payload interface{},
 ) ([]byte, int, error) {
-	return MakeGatewayRequest(
+	return MakeServiceRequest(
 		namespace, serviceName, servicePort,
 		func(baseURL string) ([]byte, int, error) {
 			return PostRequestWithStatus(baseURL+endpoint, payload)
