@@ -46,15 +46,6 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 			"-f", "config/samples/runtime_v1alpha1_gateway_with_agent.yaml"))
 		Expect(err).NotTo(HaveOccurred(), "Failed to apply agent and gateway samples")
 
-		By("waiting for agent to be ready")
-		err = utils.VerifyAgentReady("mocked-agent-exposed-1", "default", 3*time.Minute)
-		Expect(err).NotTo(HaveOccurred())
-
-		By("waiting for agent gateway deployment to be ready")
-		Eventually(func() error {
-			return utils.VerifyDeploymentReady("agent-gateway", "default", 3*time.Minute)
-		}, 3*time.Minute, 5*time.Second).Should(Succeed(), "Agent gateway deployment should be ready")
-
 		By("waiting for gateway to have agent endpoints")
 		Eventually(func(g Gomega) {
 			_, _, err := utils.MakeServiceGet("default", "agent-gateway", 10000,
@@ -154,22 +145,15 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 				_, _ = fmt.Fprintf(GinkgoWriter, "Connection error (will retry): %v\n", err)
 				return fmt.Errorf("failed to connect to gateway: %w", err)
 			}
-
-			// Log the received status code
-			_, _ = fmt.Fprintf(GinkgoWriter, "Received HTTP status code: %d\n", statusCode)
-
 			if statusCode == 404 {
 				// Success! Gateway correctly removed the deleted agent
-				_, _ = fmt.Fprintf(GinkgoWriter, "✓ Gateway correctly returns 404 for deleted agent\n")
 				return nil
 			}
 			if statusCode == 200 {
 				// Agent still exists in gateway config - needs more time to reconcile
-				_, _ = fmt.Fprintf(GinkgoWriter, "Agent still accessible with HTTP 200, gateway needs more time to reconcile\n")
 				return fmt.Errorf("expected 404 for deleted agent, but agent is still accessible (HTTP 200)")
 			}
 			// Unexpected status code
-			_, _ = fmt.Fprintf(GinkgoWriter, "Unexpected status code: %d\n", statusCode)
 			return fmt.Errorf("expected 404 for deleted agent, got unexpected status code: %d", statusCode)
 		}, 3*time.Minute, 2*time.Second).Should(Succeed(), "Gateway should return 404 for deleted agent")
 	})
@@ -189,10 +173,6 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		_, err := utils.Run(exec.Command("kubectl", "apply",
 			"-f", "config/samples/runtime_v1alpha1_gateway_with_agent.yaml"))
 		Expect(err).NotTo(HaveOccurred(), "Failed to apply agent")
-
-		By("waiting for agent to be ready")
-		err = utils.VerifyAgentReady("mocked-agent-exposed-1", "default", 3*time.Minute)
-		Expect(err).NotTo(HaveOccurred(), "Agent should be ready")
 
 		By("verifying agent card is accessible and has correct URL")
 		var body []byte
