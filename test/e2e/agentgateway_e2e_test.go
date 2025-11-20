@@ -56,9 +56,11 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		}, 3*time.Minute, 5*time.Second).Should(Succeed(), "Agent gateway deployment should be ready")
 
 		By("waiting for gateway to have agent endpoints")
-		_, _, err = utils.MakeGatewayGet("default", "agent-gateway", 10000,
-			"/mocked-agent-exposed-1/.well-known/agent-card.json")
-		Expect(err).NotTo(HaveOccurred(), "Gateway should have agent endpoints after reconciliation")
+		Eventually(func() error {
+			_, _, err := utils.MakeGatewayGet("default", "agent-gateway", 10000,
+				"/mocked-agent-exposed-1/.well-known/agent-card.json")
+			return err
+		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Gateway should have agent endpoints after reconciliation")
 	})
 
 	AfterAll(func() {
@@ -89,26 +91,38 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 				"metadata": map[string]interface{}{},
 			},
 		}
-		body, statusCode, err := utils.MakeGatewayPost("default", "agent-gateway", 10000,
-			"/mocked-agent-exposed-1", payload)
-		Expect(err).NotTo(HaveOccurred(), "Failed to send POST request to agent gateway")
+
+		var body []byte
+		var statusCode int
+		Eventually(func() error {
+			var err error
+			body, statusCode, err = utils.MakeGatewayPost("default", "agent-gateway", 10000,
+				"/mocked-agent-exposed-1", payload)
+			return err
+		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Failed to send POST request to agent gateway")
 		Expect(statusCode).To(Equal(200), "Expected HTTP 200 status code")
 
 		var responseMap map[string]interface{}
-		err = json.Unmarshal(body, &responseMap)
+		err := json.Unmarshal(body, &responseMap)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(responseMap["result"]).NotTo(BeNil())
 	})
 
 	It("should retrieve agent card with correct url", func() {
 		By("retrieving agent card from the gateway")
-		body, statusCode, err := utils.MakeGatewayGet("default", "agent-gateway", 10000,
-			"/mocked-agent-exposed-1/.well-known/agent-card.json")
-		Expect(err).NotTo(HaveOccurred(), "Failed to send GET request to agent-card endpoint")
+
+		var body []byte
+		var statusCode int
+		Eventually(func() error {
+			var err error
+			body, statusCode, err = utils.MakeGatewayGet("default", "agent-gateway", 10000,
+				"/mocked-agent-exposed-1/.well-known/agent-card.json")
+			return err
+		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Failed to send GET request to agent-card endpoint")
 		Expect(statusCode).To(Equal(200), "Expected HTTP 200 status code")
 
 		var responseMap map[string]interface{}
-		err = json.Unmarshal(body, &responseMap)
+		err := json.Unmarshal(body, &responseMap)
 		Expect(err).NotTo(HaveOccurred(), "Failed to unmarshal agent card response")
 		Expect(responseMap["url"]).NotTo(BeEmpty(), "Agent card URL should not be empty")
 		Expect(responseMap["url"]).To(ContainSubstring("/mocked-agent-exposed-1"),
@@ -117,13 +131,17 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 
 	It("should reload when agent is deleted", func() {
 		By("verifying agent is accessible via agent card")
-		_, statusCode, err := utils.MakeGatewayGet("default", "agent-gateway", 10000,
-			"/mocked-agent-exposed-1/.well-known/agent-card.json")
-		Expect(err).NotTo(HaveOccurred(), "Agent card should be accessible before deletion")
+		var statusCode int
+		Eventually(func() error {
+			var err error
+			_, statusCode, err = utils.MakeGatewayGet("default", "agent-gateway", 10000,
+				"/mocked-agent-exposed-1/.well-known/agent-card.json")
+			return err
+		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Agent card should be accessible before deletion")
 		Expect(statusCode).To(Equal(200), "Expected HTTP 200 status code of agent")
 
 		By("deleting the agent")
-		err = utils.DeleteAgent("mocked-agent-exposed-1", "default")
+		err := utils.DeleteAgent("mocked-agent-exposed-1", "default")
 		Expect(err).NotTo(HaveOccurred(), "Failed to delete agent")
 
 		By("verifying deleted agent returns 404")
@@ -158,14 +176,17 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 
 	It("should reload when agent is added", func() {
 		By("verifying agent is not accessible (agent was deleted in previous test)")
-		_, statusCode, err := utils.MakeGatewayGet("default", "agent-gateway", 10000,
-			"/mocked-agent-exposed-1/.well-known/agent-card.json")
-		if err == nil {
-			Expect(statusCode).To(Equal(404), "Should return 404 for non-existent agent")
-		}
+		var statusCode int
+		Eventually(func() error {
+			var err error
+			_, statusCode, err = utils.MakeGatewayGet("default", "agent-gateway", 10000,
+				"/mocked-agent-exposed-1/.well-known/agent-card.json")
+			return err
+		}, 2*time.Minute, 5*time.Second).Should(Succeed())
+		Expect(statusCode).To(Equal(404), "Should return 404 for non-existent agent")
 
 		By("adding the agent back")
-		_, err = utils.Run(exec.Command("kubectl", "apply",
+		_, err := utils.Run(exec.Command("kubectl", "apply",
 			"-f", "config/samples/runtime_v1alpha1_gateway_with_agent.yaml"))
 		Expect(err).NotTo(HaveOccurred(), "Failed to apply agent")
 
@@ -174,9 +195,13 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		Expect(err).NotTo(HaveOccurred(), "Agent should be ready")
 
 		By("verifying agent card is accessible and has correct URL")
-		body, statusCode, err := utils.MakeGatewayGet("default", "agent-gateway", 10000,
-			"/mocked-agent-exposed-1/.well-known/agent-card.json")
-		Expect(err).NotTo(HaveOccurred(), "Agent card should be accessible")
+		var body []byte
+		Eventually(func() error {
+			var err error
+			body, statusCode, err = utils.MakeGatewayGet("default", "agent-gateway", 10000,
+				"/mocked-agent-exposed-1/.well-known/agent-card.json")
+			return err
+		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Agent card should be accessible")
 		Expect(statusCode).To(Equal(200), "Expected HTTP 200 status code")
 
 		var responseMap map[string]interface{}

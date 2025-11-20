@@ -24,10 +24,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2" // nolint:revive,staticcheck
-	. "github.com/onsi/gomega"    // nolint:revive,staticcheck
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -46,6 +44,9 @@ const (
 	certmanagerVersion = "v1.19.1"
 	certmanagerURLTmpl = "https://github.com/cert-manager/cert-manager/releases/download/%s/cert-manager.yaml"
 )
+
+// RequestFunc defines a function that makes an HTTP request given a base URL (host:port)
+type RequestFunc func(baseURL string) (body []byte, statusCode int, err error)
 
 func warnError(err error) {
 	_, _ = fmt.Fprintf(GinkgoWriter, "warning: %v\n", err)
@@ -460,61 +461,38 @@ func PortForwardService(ctx context.Context, namespace, serviceName string, port
 }
 
 // MakeGatewayRequest establishes a port-forward to the service, makes an HTTP request, and cleans up.
-// The operation is wrapped in Eventually to handle transient network errors and pod restarts.
+// The requestFunc receives the base URL (e.g., "http://localhost:12345") and performs the actual request.
 // Non-2xx HTTP status codes are returned successfully (not treated as errors), allowing callers
 // to verify specific status codes like 404.
 func MakeGatewayRequest(
 	namespace, serviceName string,
 	servicePort int,
-	endpoint, method string,
-	payload interface{},
-	timeout, interval time.Duration,
+	requestFunc RequestFunc,
 ) (body []byte, statusCode int, err error) {
-	// Variables to capture results from the Eventually closure
-	var capturedBody []byte
-	var capturedStatusCode int
+	// Create fresh port-forward for this request
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Eventually will retry until the function returns nil (success) or timeout occurs
-	Eventually(func() error {
-		// Create fresh port-forward for this request
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+	localPort, pfErr := PortForwardService(ctx, namespace, serviceName, servicePort)
+	if pfErr != nil {
+		return nil, 0, fmt.Errorf("port-forward failed: %w", pfErr)
+	}
 
-		localPort, pfErr := PortForwardService(ctx, namespace, serviceName, servicePort)
-		if pfErr != nil {
-			return fmt.Errorf("port-forward failed: %w", pfErr)
-		}
-
-		url := fmt.Sprintf("http://localhost:%d%s", localPort, endpoint)
-
-		// Make the actual HTTP request based on method
-		var httpErr error
-		if method == "POST" {
-			capturedBody, capturedStatusCode, httpErr = PostRequestWithStatus(url, payload)
-		} else {
-			capturedBody, capturedStatusCode, httpErr = GetRequestWithStatus(url)
-		}
-
-		// Return the HTTP error (if any) so Eventually can retry on connection errors
-		// If httpErr is nil (HTTP request succeeded with any status code), Eventually succeeds
-		return httpErr
-	}, timeout, interval).Should(Succeed())
-
-	// If we reach here, Eventually succeeded (function returned nil)
-	// Return the captured values with nil error
-	return capturedBody, capturedStatusCode, nil
+	baseURL := fmt.Sprintf("http://localhost:%d", localPort)
+	return requestFunc(baseURL)
 }
 
-// MakeGatewayGet is a convenience wrapper for GET requests to the gateway with default timeout.
+// MakeGatewayGet is a convenience wrapper for GET requests to the gateway.
 func MakeGatewayGet(namespace, serviceName string, servicePort int, endpoint string) ([]byte, int, error) {
 	return MakeGatewayRequest(
 		namespace, serviceName, servicePort,
-		endpoint, "GET", nil,
-		2*time.Minute, 5*time.Second,
+		func(baseURL string) ([]byte, int, error) {
+			return GetRequestWithStatus(baseURL + endpoint)
+		},
 	)
 }
 
-// MakeGatewayPost is a convenience wrapper for POST requests to the gateway with default timeout.
+// MakeGatewayPost is a convenience wrapper for POST requests to the gateway.
 func MakeGatewayPost(
 	namespace, serviceName string,
 	servicePort int,
@@ -523,7 +501,8 @@ func MakeGatewayPost(
 ) ([]byte, int, error) {
 	return MakeGatewayRequest(
 		namespace, serviceName, servicePort,
-		endpoint, "POST", payload,
-		2*time.Minute, 5*time.Second,
+		func(baseURL string) ([]byte, int, error) {
+			return PostRequestWithStatus(baseURL+endpoint, payload)
+		},
 	)
 }
