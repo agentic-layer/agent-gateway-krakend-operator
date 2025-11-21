@@ -20,19 +20,11 @@ func VerifyDeploymentReady(name, namespace string, timeout time.Duration) error 
 	return nil
 }
 
-// VerifyAgentReady verifies that an agent is ready within the given timeout
-func VerifyAgentReady(name, namespace string, timeout time.Duration) error {
-	cmd := exec.Command("kubectl", "wait", "agent", name, "-n", namespace,
-		"--for=condition=Ready", "--timeout="+timeout.String())
+// DeleteAgent deletes an agent resource
+func DeleteAgent(name, namespace string) error {
+	cmd := exec.Command("kubectl", "delete", "agent", name, "-n", namespace)
 	if output, err := Run(cmd); err != nil {
-		describeAgent, _ := Run(exec.Command("kubectl", "describe", "agent", name, "-n", namespace))
-		describeDeployment, _ := Run(exec.Command("kubectl", "describe", "deployment", name, "-n", namespace))
-		describePods, _ := Run(exec.Command("kubectl", "describe", "pod", "-l", "app="+name, "-n", namespace))
-		return fmt.Errorf("deployment is not ready (%s):\nAgent:\n%s\nDeployment:\n%s\nPods:\n%s",
-			output, describeAgent, describeDeployment, describePods,
-		)
+		return fmt.Errorf("failed to delete agent %s in namespace %s: %s", name, namespace, output)
 	}
-
-	// Currently, the agent is considered ready even though the deployment is still in progress
-	return VerifyDeploymentReady(name, namespace, timeout)
+	return nil
 }

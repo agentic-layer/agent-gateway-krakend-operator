@@ -45,6 +45,9 @@ const (
 	certmanagerURLTmpl = "https://github.com/cert-manager/cert-manager/releases/download/%s/cert-manager.yaml"
 )
 
+// RequestFunc defines a function that makes an HTTP request given a base URL (host:port)
+type RequestFunc func(baseURL string) (body []byte, statusCode int, err error)
+
 func warnError(err error) {
 	_, _ = fmt.Fprintf(GinkgoWriter, "warning: %v\n", err)
 }
@@ -412,7 +415,8 @@ func PortForwardPod(ctx context.Context, namespace, podName string, port int) (i
 	}
 	localPort := int(forwardedPorts[0].Local)
 
-	By(fmt.Sprintf("port-forward established: 127.0.0.1:%d -> %s/%s:%d", localPort, namespace, podName, port))
+	_, _ = fmt.Fprintf(GinkgoWriter, "port-forward established: 127.0.0.1:%d -> %s/%s:%d",
+		localPort, namespace, podName, port)
 
 	// Monitor context and stop port forwarding when canceled
 	go func() {
@@ -451,8 +455,56 @@ func PortForwardService(ctx context.Context, namespace, serviceName string, port
 		return 0, fmt.Errorf("failed to resolve service to pod: %w", err)
 	}
 
-	By(fmt.Sprintf("resolved service %s (port %d) to pod %s (port %d)", serviceName, port, pod.Name, targetPort))
+	_, _ = fmt.Fprintf(GinkgoWriter, "resolved service %s (port %d) to pod %s (port %d)",
+		serviceName, port, pod.Name, targetPort)
 
 	// Port forward to the resolved pod using the target port
 	return PortForwardPod(ctx, namespace, pod.Name, targetPort)
+}
+
+// MakeServiceRequest establishes a port-forward to the service, makes an HTTP request, and cleans up.
+// The requestFunc receives the base URL (e.g., "http://localhost:12345") and performs the actual request.
+// Non-2xx HTTP status codes are returned successfully (not treated as errors), allowing callers
+// to verify specific status codes like 404.
+func MakeServiceRequest(
+	namespace, serviceName string,
+	servicePort int,
+	requestFunc RequestFunc,
+) (body []byte, statusCode int, err error) {
+	// Create fresh port-forward for this request
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	localPort, pfErr := PortForwardService(ctx, namespace, serviceName, servicePort)
+	if pfErr != nil {
+		return nil, 0, fmt.Errorf("port-forward failed: %w", pfErr)
+	}
+
+	baseURL := fmt.Sprintf("http://localhost:%d", localPort)
+	return requestFunc(baseURL)
+}
+
+// MakeServiceGet is a convenience wrapper for GET requests to a Kubernetes service.
+func MakeServiceGet(namespace, serviceName string, servicePort int, endpoint string) ([]byte, int, error) {
+	return MakeServiceRequest(
+		namespace, serviceName, servicePort,
+		func(baseURL string) ([]byte, int, error) {
+			return GetRequestWithStatus(baseURL + endpoint)
+		},
+	)
+}
+
+// MakeServicePost is a convenience wrapper for POST requests to a Kubernetes service.
+func MakeServicePost(
+	namespace, serviceName string,
+	servicePort int,
+	endpoint string,
+	payload interface{},
+) ([]byte, int, error) {
+	return MakeServiceRequest(
+		namespace, serviceName, servicePort,
+		func(baseURL string) ([]byte, int, error) {
+			return PostRequestWithStatus(baseURL+endpoint, payload)
+		},
+	)
 }
