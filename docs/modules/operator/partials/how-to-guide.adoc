@@ -1,3 +1,71 @@
 = Install the Agent Gateway Operator for KrakenD
 
-tbd
+This guide walks you through installing the KrakenD Agent Gateway Operator on your Kubernetes cluster.
+
+== Dependencies
+
+The operator requires the following dependencies:
+
+* **Kubernetes**: A running Kubernetes cluster
+* **Agent Runtime Operator**: Includes the required CRDs for Agent Gateways. See xref:agent-runtime-operator:agent-runtime:how-to-guide.adoc[Install the Agent Runtime Operator] for installation instructions.
+
+== Installation
+
+=== Install with Kubernetes YAML
+
+==== Install the Operator
+
+[source,bash]
+----
+# Install the operator
+kubectl apply -f https://github.com/agentic-layer/agent-gateway-krakend-operator/releases/download/v0.2.1/install.yaml
+# Wait for the operator to be ready
+kubectl wait --for=condition=Available --timeout=60s -n agent-gateway-krakend-operator-system deployment/agent-gateway-krakend-operator-controller-manager
+----
+
+Find the latest version at https://github.com/agentic-layer/agent-gateway-krakend-operator/releases/
+
+=== Install with Flux
+
+If you're using Flux for GitOps, you can install the operator using an OCI repository:
+
+[source,yaml]
+----
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: agent-gateway-krakend-operator
+  namespace: flux-system
+spec:
+  interval: 5m
+  url: oci://ghcr.io/agentic-layer/manifests/agent-gateway-krakend-operator
+  ref:
+    semver: ">= 0, < 1"
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: agent-gateway-krakend-operator
+  namespace: flux-system
+spec:
+  sourceRef:
+    kind: OCIRepository
+    name: agent-gateway-krakend-operator
+  interval: 10m
+  path: ./default
+  prune: true
+  wait: true
+  dependsOn:
+    # Ensure cert-manager is installed first (if you install it with Flux as well)
+    - name: cert-manager
+----
+
+== Verify the installation
+
+[source,bash]
+----
+# Check that the operator is running
+kubectl get pods -n agent-gateway-krakend-operator-system
+----
+
+You should see the operator pod running.
