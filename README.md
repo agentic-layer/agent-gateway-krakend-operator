@@ -25,69 +25,57 @@ This operator depends on the Agent Runtime Operator to provide `Agent`, `AgentGa
 
 Before working with this project, ensure you have the following tools installed on your system:
 
-  * **Go**: version 1.24.0 or higher
-  * **Docker**: version 20.10+ (or a compatible alternative like Podman)
-  * **kubectl**: The Kubernetes command-line tool
-  * **kind**: For running Kubernetes locally in Docker
-  * **make**: The build automation tool
-  * **Git**: For version control
-  * **Agent Runtime Operator**: Must be installed and running in the cluster
+* **Go**: version 1.24.0 or higher
+* **Docker**: version 20.10+ (or a compatible alternative like Podman)
+* **kubectl**: The Kubernetes command-line tool
+* **kind**: For running Kubernetes locally in Docker
+* **make**: The build automation tool
 
 ----
 
 ## Getting Started
 
-Follow these steps to get the operator up and running on a local Kubernetes cluster.
+📖 **For detailed setup instructions**, see our [Getting Started guide](https://docs.agentic-layer.ai/agent-gateway-krakend-operator/) in the documentation.
 
-**Important:** These instructions assume you have already installed and configured the [Agent Runtime Operator](https://github.com/agentic-layer/agent-runtime-operator).
+**Quick Start:**
 
-1.  **Clone the repository:**
+> **Note:** This operator requires the [Agent Runtime Operator](https://github.com/agentic-layer/agent-runtime-operator) to be installed first, as it provides the required CRDs (`AgentGateway` and `AgentGatewayClass`).
 
-    ```bash
-    git clone https://github.com/agentic-layer/agent-gateway-krakend-operator
-    cd agent-gateway-krakend-operator
-    ```
+```shell
+# Create local cluster and install cert-manager
+kind create cluster
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.1/cert-manager.yaml
 
-2.  **Verify Agent Runtime Operator is installed:**
-    Ensure the Agent Runtime Operator is running and the required CRDs are available:
+# Install the Agent Runtime Operator (provides CRDs)
+kubectl apply -f https://github.com/agentic-layer/agent-runtime-operator/releases/download/v0.9.0/install.yaml
 
-    ```bash
-    kubectl get crd | grep runtime.agentic-layer.ai
-    kubectl get pods -n agent-runtime-operator-system
-    ```
+# Install the Agent Gateway operator
+kubectl apply -f  https://github.com/agentic-layer/agent-gateway-krakend-operator/releases/download/v0.2.0/install.yaml
+```
 
-3.  **Build and deploy the operator:**
-    These commands will build the operator's container image, load it into your cluster, and deploy it.
+## Development
 
-    ```bash
-    make docker-build
-    make kind-load
-    make deploy
-    ```
+Follow the prerequisites above to set up your local environment.
+Then follow these steps to build and deploy the operator locally:
 
-4.  **Verify the deployment:**
-    After a successful start, you should see the controller manager pod running in the `agent-gateway-krakend-operator-system` namespace.
+```shell
+# Install CRDs into the cluster
+make install
+# Build docker image
+make docker-build
+# Load image into kind cluster (not needed if using local registry)
+make kind-load
+# Deploy the operator to the cluster
+make deploy
+```
 
-    ```bash
-    kubectl get pods -n agent-gateway-krakend-operator-system
-    ```
+After a successful start, you should see the controller manager pod running in the `agent-gateway-krakend-operator-system` namespace.
 
-5.  **Create the default AgentGatewayClass:**
-    The operator includes a default `AgentGatewayClass` that will be created automatically during installation. Verify it exists:
-
-    ```bash
-    kubectl get agentgatewayclasses
-    ```
+```bash
+kubectl get pods -n agent-gateway-krakend-operator-system
+```
 
 ## Configuration
-
-### Environment Variables
-
-The operator can be configured using the following environment variables:
-
-- `ENABLE_WEBHOOKS` - Set to `false` to disable admission webhooks (default: `true`)
-- `METRICS_BIND_ADDRESS` - Address for metrics server (default: `:8443`)
-- `HEALTH_PROBE_BIND_ADDRESS` - Address for health probes (default: `:8081`)
 
 ### AgentGateway Configuration
 
@@ -124,24 +112,6 @@ spec:
     - type: A2A
 ```
 
-The operator will:
-1. Discover all exposed agents across all namespaces
-2. Generate KrakenD endpoint configurations for each agent
-3. Create a ConfigMap with the complete KrakenD configuration
-4. Deploy a KrakenD deployment that serves the unified gateway
-
-### Default AgentGatewayClass
-
-The operator installs a `AgentGatewayClass` resource:
-
-```yaml
-apiVersion: runtime.agentic-layer.ai/v1alpha1
-kind: AgentGatewayClass
-metadata:
-  name: krakend
-spec:
-  controller: runtime.agentic-layer.ai/agent-gateway-controller
-```
 
 ## End-to-End (E2E) Testing
 
@@ -150,34 +120,40 @@ spec:
 - **kind** must be installed and available in PATH
 - **Docker** running and accessible
 - **kubectl** configured and working
-- **Agent Runtime Operator** must be installed in the test environment
 
 ### Running E2E Tests
 
+The E2E tests automatically create an isolated Kind cluster, deploy the operator, run comprehensive tests, and clean up afterwards.
+
 ```bash
-# Run complete E2E test suite (it will create a test cluster, if not present)
+# Run complete E2E test suite
 make test-e2e
 ```
 
+The E2E test suite includes:
+- Operator deployment verification
+- CRD installation testing
+- Webhook functionality testing
+- Certificate management verification
+
+### Manual E2E Test Setup
+
+If you need to run E2E tests manually or inspect the test environment:
+
 ```bash
-# Clean up test cluster
+# Set up test cluster (will create 'ai-gateway-litellm-test-e2e' cluster)
+make setup-test-e2e
+```
+```bash
+# Run E2E tests against the existing cluster
+KIND_CLUSTER=ai-gateway-litellm-test-e2e go test ./test/e2e/ -v -ginkgo.v
+```
+```bash
+# Clean up test cluster when done
 make cleanup-test-e2e
 ```
 
 ## Testing Tools and Configuration
-
-The project includes comprehensive test coverage:
-
-- **Unit Tests**: Complete test suite for the controller with AgentGatewayClass responsibility checks
-- **Integration Tests**: Tests for Agent discovery and KrakenD configuration generation
-- **Ginkgo/Gomega**: BDD-style testing framework
-- **EnvTest**: Kubernetes API server testing environment
-
-Run tests with:
-
-```bash
-make test
-```
 
 ## Sample Data
 
@@ -207,111 +183,8 @@ The project includes sample manifests to help you get started.
     kubectl get configmaps -l provider=krakend
     ```
 
-## Contributing
 
-We welcome contributions to the Agent Gateway KrakenD Operator! Please follow these guidelines:
 
-### Setup for Contributors
+## Contribution
 
-1. **Fork and clone the repository**
-2. **Install the Agent Runtime Operator** in your development environment
-3. **Install pre-commit hooks** (if available):
-   ```bash
-   # Install hooks for this repository
-   pre-commit install
-   ```
-
-4. **Verify your development environment**:
-   ```bash
-   # Run all checks
-   make fmt vet lint test
-   ```
-
-### Code Style and Standards
-
-- **Go Style**: We follow standard Go conventions and use `gofmt` for formatting
-- **Linting**: Code must pass golangci-lint checks (see `.golangci.yml`)
-- **Testing**: All new features must include appropriate unit tests
-- **Documentation**: Update relevant documentation for new features
-
-### Development Workflow
-
-1. **Create a feature branch** from `main`:
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-
-2. **Make your changes** following the code style guidelines
-
-3. **Run development checks**:
-   ```bash
-   # Format code
-   make fmt
-
-   # Run static analysis
-   make vet
-
-   # Run linting
-   make lint
-
-   # Run unit tests
-   make test
-
-   # Generate updated manifests if needed
-   make manifests generate
-   ```
-
-4. **Test your changes**:
-   ```bash
-   # Run E2E tests
-   make test-e2e
-   ```
-
-5. **Commit your changes** with a descriptive commit message
-
-6. **Submit a pull request** with:
-   - Clear description of the changes
-   - Reference to any related issues
-   - Test results and verification steps
-
-## Project Distribution
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
-
-```bash
-make build-installer IMG=<some-registry>/agent-gateway-krakend-operator:tag
-```
-
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project.
-
-2. **Using the installer**
-
-Users can install the project with:
-
-```bash
-kubectl apply -f https://raw.githubusercontent.com/agentic-layer/agent-gateway-krakend-operator/<tag or branch>/dist/install.yaml
-```
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
-
-## License
-
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+See [Contribution Guide](https://github.com/agentic-layer/agent-runtime-krakend-operator?tab=contributing-ov-file) for details on contribution, and the process for submitting pull requests.
