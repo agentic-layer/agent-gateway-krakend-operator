@@ -45,6 +45,9 @@ const DefaultGatewayPort = 8080
 const AgentGatewayKrakendControllerName = "runtime.agentic-layer.ai/agent-gateway-krakend-controller"
 const Image = "ghcr.io/agentic-layer/agent-gateway-krakend:0.3.0"
 
+// Version set at build time using ldflags
+var Version = "dev"
+
 // KrakendBackend represents a backend configuration in KrakenD
 type KrakendBackend struct {
 	// Host defines the agents host addresses
@@ -435,7 +438,7 @@ func (r *AgentGatewayReconciler) createConfigMapForKrakend(ctx context.Context, 
 		Timeout:           agentGateway.Spec.Timeout.Duration.String(),
 		PluginNames:       []string{"agentcard-rw", "openai-a2a"}, // Order matters here
 		Endpoints:         endpoints,
-		ServiceVersion:    Image,
+		ServiceVersion:    Version,
 		DeploymentName:    agentGateway.Name,
 		OtelCollectorHost: "otel-collector.monitoring.svc.cluster.local",
 	}
