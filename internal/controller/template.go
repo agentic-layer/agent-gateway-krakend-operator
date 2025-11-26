@@ -35,6 +35,46 @@ const krakendConfigTemplate = `{
         "router": {
             "disable_access_log": false,
             "hide_version_header": true
+        },
+        "@comment": "OpenTelemetry configuration for distributed tracing. trace_sample_rate defaults to 1.0 (100%).",
+        "telemetry/opentelemetry": {
+            "service_name": "agent-gateway-krakend",
+            "service_version": "{{.ServiceVersion}}",
+            "exporters": {
+                "otlp": [
+                    {
+                        "name": "paal-otel-collector",
+                        "host": "otel-collector.monitoring.svc.cluster.local",
+                        "port": 4318,
+                        "use_http": true
+                    }
+                ]
+            },
+            "layers": {
+                "global": {
+                    "disable_metrics": false,
+                    "disable_traces": false,
+                    "disable_propagation": false
+                },
+                "proxy": {
+                    "disable_metrics": false,
+                    "disable_traces": false
+                },
+                "backend": {
+                    "metrics": {
+                        "disable_stage": false,
+                        "round_trip": true,
+                        "read_payload": true,
+                        "detailed_connection": true
+                    },
+                    "traces": {
+                        "disable_stage": false,
+                        "round_trip": true,
+                        "read_payload": true,
+                        "detailed_connection": true
+                    }
+                }
+            }
         }
     },
     "timeout": "{{.Timeout}}",
