@@ -77,6 +77,10 @@ type KrakendConfigData struct {
 	Endpoints []KrakendEndpoint
 	// ServiceVersion is the Docker image path used to identify the service version
 	ServiceVersion string
+	// DeploymentName is the name of the deployment
+	DeploymentName string
+	// OtelCollectorHost is the hostname of the OpenTelemetry collector
+	OtelCollectorHost string
 }
 
 // AgentGatewayReconciler reconciles a AgentGateway object
@@ -427,11 +431,13 @@ func (r *AgentGatewayReconciler) createConfigMapForKrakend(ctx context.Context, 
 	}
 
 	templateData := KrakendConfigData{
-		Port:           DefaultGatewayPort,
-		Timeout:        agentGateway.Spec.Timeout.Duration.String(),
-		PluginNames:    []string{"agentcard-rw", "openai-a2a"}, // Order matters here
-		Endpoints:      endpoints,
-		ServiceVersion: Image,
+		Port:              DefaultGatewayPort,
+		Timeout:           agentGateway.Spec.Timeout.Duration.String(),
+		PluginNames:       []string{"agentcard-rw", "openai-a2a"}, // Order matters here
+		Endpoints:         endpoints,
+		ServiceVersion:    Image,
+		DeploymentName:    agentGateway.Name,
+		OtelCollectorHost: "otel-collector.monitoring.svc.cluster.local",
 	}
 
 	// Parse and execute the template

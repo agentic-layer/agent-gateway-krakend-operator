@@ -38,13 +38,13 @@ const krakendConfigTemplate = `{
         },
         "@comment": "OpenTelemetry configuration for distributed tracing. trace_sample_rate defaults to 1.0 (100%).",
         "telemetry/opentelemetry": {
-            "service_name": "agent-gateway-krakend",
+            "service_name": "{{.DeploymentName}}",
             "service_version": "{{.ServiceVersion}}",
             "exporters": {
                 "otlp": [
                     {
-                        "name": "paal-otel-collector",
-                        "host": "otel-collector.monitoring.svc.cluster.local",
+                        "name": "otel-collector",
+                        "host": "{{.OtelCollectorHost}}",
                         "port": 4318,
                         "use_http": true
                     }
