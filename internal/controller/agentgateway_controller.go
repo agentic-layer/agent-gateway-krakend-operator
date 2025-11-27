@@ -42,7 +42,7 @@ import (
 )
 
 const DefaultGatewayPort = 8080
-const ControllerName = "runtime.agentic-layer.ai/agent-gateway-krakend-controller"
+const AgentGatewayKrakendControllerName = "runtime.agentic-layer.ai/agent-gateway-krakend-controller"
 const Image = "ghcr.io/agentic-layer/agent-gateway-krakend:0.3.0"
 
 // KrakendBackend represents a backend configuration in KrakenD
@@ -165,7 +165,7 @@ func (r *AgentGatewayReconciler) shouldProcessAgentGateway(ctx context.Context, 
 	// Filter agentGatewayClassList to only contain classes with matching controller
 	var krakendClasses []agentruntimev1alpha1.AgentGatewayClass
 	for _, agentGatewayClass := range agentGatewayClassList.Items {
-		if agentGatewayClass.Spec.Controller == ControllerName {
+		if agentGatewayClass.Spec.Controller == AgentGatewayKrakendControllerName {
 			krakendClasses = append(krakendClasses, agentGatewayClass)
 		}
 	}
@@ -757,7 +757,7 @@ func (r *AgentGatewayReconciler) getConfigMapNameFromVolumes(volumes []corev1.Vo
 // findAgentGatewaysForAgent returns all AgentGateway resources that need to be reconciled
 // when an Agent changes. Since all gateways discover agents across all namespaces,
 // any Agent change affects all AgentGateway resources.
-func (r *AgentGatewayReconciler) findAgentGatewaysForAgent(ctx context.Context, obj client.Object) []ctrl.Request {
+func (r *AgentGatewayReconciler) findAgentGatewaysForAgent(ctx context.Context, _ client.Object) []ctrl.Request {
 	var agentGatewayList agentruntimev1alpha1.AgentGatewayList
 	if err := r.List(ctx, &agentGatewayList); err != nil {
 		return []ctrl.Request{}
@@ -786,6 +786,6 @@ func (r *AgentGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&agentruntimev1alpha1.Agent{},
 			handler.EnqueueRequestsFromMapFunc(r.findAgentGatewaysForAgent),
 		).
-		Named(ControllerName).
+		Named(AgentGatewayKrakendControllerName).
 		Complete(r)
 }
