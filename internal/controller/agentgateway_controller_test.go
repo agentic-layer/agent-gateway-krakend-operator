@@ -1287,23 +1287,12 @@ var _ = Describe("AgentGateway Controller", func() {
 
 			// Verify controller restored the correct image
 			reconciledDeployment := &appsv1.Deployment{}
-			Eventually(func() bool {
-				err := k8sClient.Get(ctx, types.NamespacedName{
-					Name:      agentGatewayName,
-					Namespace: agentGatewayNamespace,
-				}, reconciledDeployment)
-				if err != nil {
-					return false
-				}
-
-				if len(reconciledDeployment.Spec.Template.Spec.Containers) == 0 {
-					return false
-				}
-
-				return reconciledDeployment.Spec.Template.Spec.Containers[0].Image == Image
-			}, timeout, interval).Should(BeTrue())
-
-			// Double-check the final image is correct
+			err = k8sClient.Get(ctx, types.NamespacedName{
+				Name:      agentGatewayName,
+				Namespace: agentGatewayNamespace,
+			}, reconciledDeployment)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(reconciledDeployment.Spec.Template.Spec.Containers).NotTo(BeEmpty())
 			Expect(reconciledDeployment.Spec.Template.Spec.Containers[0].Image).To(Equal(Image))
 		})
 	})
