@@ -50,7 +50,7 @@ kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/
 kubectl apply -f https://github.com/agentic-layer/agent-runtime-operator/releases/download/v0.9.0/install.yaml
 
 # Install the Agent Gateway operator
-kubectl apply -f  https://github.com/agentic-layer/agent-gateway-krakend-operator/releases/download/v0.2.0/install.yaml
+kubectl apply -f  https://github.com/agentic-layer/agent-gateway-krakend-operator/releases/download/v0.3.0/install.yaml
 ```
 
 ## Development

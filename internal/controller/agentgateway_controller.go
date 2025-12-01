@@ -43,7 +43,7 @@ import (
 
 const DefaultGatewayPort = 8080
 const ControllerName = "runtime.agentic-layer.ai/agent-gateway-krakend-controller"
-const Image = "ghcr.io/agentic-layer/agent-gateway-krakend:0.2.0"
+const Image = "ghcr.io/agentic-layer/agent-gateway-krakend:0.3.0"
 
 // KrakendBackend represents a backend configuration in KrakenD
 type KrakendBackend struct {
