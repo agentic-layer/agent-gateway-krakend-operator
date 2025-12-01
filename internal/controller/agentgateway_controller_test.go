@@ -1259,8 +1259,9 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(1))
 			Expect(deployment.Spec.Template.Spec.Containers[0].Image).To(Equal(Image))
 
-			// Simulate drift: manually change the image to an older version
-			deployment.Spec.Template.Spec.Containers[0].Image = "ghcr.io/agentic-layer/agent-gateway-krakend:0.2.0"
+			// Simulate drift: manually change the image to a fake outdated version
+			fakeOldImage := "fake-registry.example.com/fake-gateway:outdated"
+			deployment.Spec.Template.Spec.Containers[0].Image = fakeOldImage
 			err := k8sClient.Update(ctx, deployment)
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1271,7 +1272,7 @@ var _ = Describe("AgentGateway Controller", func() {
 				Namespace: agentGatewayNamespace,
 			}, driftedDeployment)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(driftedDeployment.Spec.Template.Spec.Containers[0].Image).To(Equal("ghcr.io/agentic-layer/agent-gateway-krakend:0.2.0"))
+			Expect(driftedDeployment.Spec.Template.Spec.Containers[0].Image).To(Equal(fakeOldImage))
 
 			// Trigger reconciliation
 			result, err := reconciler.Reconcile(ctx, ctrl.Request{
@@ -1304,7 +1305,7 @@ var _ = Describe("AgentGateway Controller", func() {
 
 			// Double-check the final image is correct
 			Expect(reconciledDeployment.Spec.Template.Spec.Containers[0].Image).To(Equal(Image))
-			Expect(reconciledDeployment.Spec.Template.Spec.Containers[0].Image).NotTo(Equal("ghcr.io/agentic-layer/agent-gateway-krakend:0.2.0"))
+			Expect(reconciledDeployment.Spec.Template.Spec.Containers[0].Image).NotTo(Equal(fakeOldImage))
 		})
 	})
 

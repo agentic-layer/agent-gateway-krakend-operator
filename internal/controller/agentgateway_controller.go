@@ -695,18 +695,20 @@ func (r *AgentGatewayReconciler) deploymentNeedsUpdate(existing, desired *appsv1
 		return true
 	}
 
-	// Compare container images
-	if len(existing.Spec.Template.Spec.Containers) != len(desired.Spec.Template.Spec.Containers) {
-		return true
-	}
-
-	for i, desiredContainer := range desired.Spec.Template.Spec.Containers {
-		if i >= len(existing.Spec.Template.Spec.Containers) {
-			return true
+	// Compare container images by finding matching containers by name
+	for _, desiredContainer := range desired.Spec.Template.Spec.Containers {
+		found := false
+		for _, existingContainer := range existing.Spec.Template.Spec.Containers {
+			if existingContainer.Name == desiredContainer.Name {
+				found = true
+				if existingContainer.Image != desiredContainer.Image {
+					return true
+				}
+				break
+			}
 		}
-		existingContainer := existing.Spec.Template.Spec.Containers[i]
-
-		if existingContainer.Image != desiredContainer.Image {
+		if !found {
+			// Desired container not found in existing deployment
 			return true
 		}
 	}
