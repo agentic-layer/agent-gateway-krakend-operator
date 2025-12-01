@@ -284,6 +284,7 @@ func (r *AgentGatewayReconciler) ensureDeployment(ctx context.Context, agentGate
 			existingDeployment.Spec.Replicas = desiredDeployment.Spec.Replicas
 			existingDeployment.Spec.Template.Labels = desiredDeployment.Spec.Template.Labels
 			existingDeployment.Spec.Template.Spec.Volumes = desiredDeployment.Spec.Template.Spec.Volumes
+			existingDeployment.Spec.Template.Spec.Containers = desiredDeployment.Spec.Template.Spec.Containers
 
 			// Update pod template annotations to trigger rolling restart on config changes
 			if existingDeployment.Spec.Template.Annotations == nil {
@@ -690,7 +691,27 @@ func (r *AgentGatewayReconciler) deploymentNeedsUpdate(existing, desired *appsv1
 	existingConfigMapName := r.getConfigMapNameFromVolumes(existing.Spec.Template.Spec.Volumes)
 	desiredConfigMapName := r.getConfigMapNameFromVolumes(desired.Spec.Template.Spec.Volumes)
 
-	return existingConfigMapName != desiredConfigMapName
+	if existingConfigMapName != desiredConfigMapName {
+		return true
+	}
+
+	// Compare container images
+	if len(existing.Spec.Template.Spec.Containers) != len(desired.Spec.Template.Spec.Containers) {
+		return true
+	}
+
+	for i, desiredContainer := range desired.Spec.Template.Spec.Containers {
+		if i >= len(existing.Spec.Template.Spec.Containers) {
+			return true
+		}
+		existingContainer := existing.Spec.Template.Spec.Containers[i]
+
+		if existingContainer.Image != desiredContainer.Image {
+			return true
+		}
+	}
+
+	return false
 }
 
 // serviceNeedsUpdate compares existing and desired Services to determine if an update is needed

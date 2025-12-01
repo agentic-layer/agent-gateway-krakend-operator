@@ -1243,6 +1243,69 @@ var _ = Describe("AgentGateway Controller", func() {
 				return deployment.Spec.Replicas != nil && *deployment.Spec.Replicas == 5
 			}, timeout, interval).Should(BeTrue())
 		})
+
+		It("should update Deployment when container image changes", func() {
+			// Get the initial deployment
+			deployment := &appsv1.Deployment{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      agentGatewayName,
+					Namespace: agentGatewayNamespace,
+				}, deployment)
+				return err == nil
+			}, timeout, interval).Should(BeTrue())
+
+			// Verify initial image is correct
+			Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(1))
+			Expect(deployment.Spec.Template.Spec.Containers[0].Image).To(Equal(Image))
+
+			// Simulate drift: manually change the image to an older version
+			deployment.Spec.Template.Spec.Containers[0].Image = "ghcr.io/agentic-layer/agent-gateway-krakend:0.2.0"
+			err := k8sClient.Update(ctx, deployment)
+			Expect(err).NotTo(HaveOccurred())
+
+			// Verify drift was applied
+			driftedDeployment := &appsv1.Deployment{}
+			err = k8sClient.Get(ctx, types.NamespacedName{
+				Name:      agentGatewayName,
+				Namespace: agentGatewayNamespace,
+			}, driftedDeployment)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(driftedDeployment.Spec.Template.Spec.Containers[0].Image).To(Equal("ghcr.io/agentic-layer/agent-gateway-krakend:0.2.0"))
+
+			// Trigger reconciliation
+			result, err := reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      agentGatewayName,
+					Namespace: agentGatewayNamespace,
+				},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal(ctrl.Result{}))
+
+			// Verify controller restored the correct image
+			reconciledDeployment := &appsv1.Deployment{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, types.NamespacedName{
+					Name:      agentGatewayName,
+					Namespace: agentGatewayNamespace,
+				}, reconciledDeployment)
+				if err != nil {
+					return false
+				}
+
+				if len(reconciledDeployment.Spec.Template.Spec.Containers) == 0 {
+					return false
+				}
+
+				return reconciledDeployment.Spec.Template.Spec.Containers[0].Image == Image
+			}, timeout, interval).Should(BeTrue())
+
+			// Double-check the final image is correct
+			Expect(reconciledDeployment.Spec.Template.Spec.Containers[0].Image).To(Equal(Image))
+			Expect(reconciledDeployment.Spec.Template.Spec.Containers[0].Image).NotTo(Equal("ghcr.io/agentic-layer/agent-gateway-krakend:0.2.0"))
+		})
 	})
 
 	Describe("Resource ownership and cleanup", func() {
