@@ -1305,7 +1305,6 @@ var _ = Describe("AgentGateway Controller", func() {
 
 			// Double-check the final image is correct
 			Expect(reconciledDeployment.Spec.Template.Spec.Containers[0].Image).To(Equal(Image))
-			Expect(reconciledDeployment.Spec.Template.Spec.Containers[0].Image).NotTo(Equal(fakeOldImage))
 		})
 	})
 
