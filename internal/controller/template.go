@@ -45,7 +45,7 @@ const krakendConfigTemplate = `{
                     {
                         "name": "otel-collector",
                         "host": "{{.OtelCollectorHost}}",
-                        "port": 4318,
+                        "port": {{.OtelCollectorPort}},
                         "use_http": true
                     }
                 ]

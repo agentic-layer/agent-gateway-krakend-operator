@@ -84,6 +84,8 @@ type KrakendConfigData struct {
 	DeploymentName string
 	// OtelCollectorHost is the hostname of the OpenTelemetry collector
 	OtelCollectorHost string
+	// OtelCollectorPort is the port of the OpenTelemetry collector
+	OtelCollectorPort string
 }
 
 // AgentGatewayReconciler reconciles a AgentGateway object
@@ -434,13 +436,17 @@ func (r *AgentGatewayReconciler) createConfigMapForKrakend(ctx context.Context, 
 	}
 
 	templateData := KrakendConfigData{
-		Port:              DefaultGatewayPort,
-		Timeout:           agentGateway.Spec.Timeout.Duration.String(),
-		PluginNames:       []string{"agentcard-rw", "openai-a2a"}, // Order matters here
-		Endpoints:         endpoints,
-		ServiceVersion:    Version,
-		DeploymentName:    agentGateway.Name,
-		OtelCollectorHost: "otel-collector.monitoring.svc.cluster.local",
+		Port:           DefaultGatewayPort,
+		Timeout:        agentGateway.Spec.Timeout.Duration.String(),
+		PluginNames:    []string{"agentcard-rw", "openai-a2a"}, // Order matters here
+		Endpoints:      endpoints,
+		ServiceVersion: Version,
+		DeploymentName: agentGateway.Name,
+		// double templating
+		// 1) go processing adds escaped code to config
+		// 2) krakenD config processing splits the env var into host and port
+		OtelCollectorHost: `{{ (split ":" (splitList "://" (env "OTEL_EXPORTER_OTLP_ENDPOINT") | last))._0 }}`,
+		OtelCollectorPort: `{{ int ((split ":" (splitList "://" (env "OTEL_EXPORTER_OTLP_ENDPOINT") | last))._1) }}`,
 	}
 
 	// Parse and execute the template
@@ -541,6 +547,13 @@ func (r *AgentGatewayReconciler) createDeploymentForKrakend(agentGateway *agentr
 							Name:  "agent-gateway",
 							Image: Image,
 							Ports: []corev1.ContainerPort{containerPort},
+							Env: []corev1.EnvVar{
+								{
+									Name:  "FC_ENABLE",
+									Value: "1",
+								},
+							},
+							EnvFrom: agentGateway.Spec.EnvFrom,
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
 									corev1.ResourceMemory: resource.MustParse("32Mi"),
@@ -722,6 +735,36 @@ func (r *AgentGatewayReconciler) deploymentNeedsUpdate(existing, desired *appsv1
 		if !found {
 			// Desired container not found in existing deployment
 			return true
+		}
+	}
+
+	// Compare EnvFrom to detect changes in environment variable sources
+	if len(existing.Spec.Template.Spec.Containers) > 0 && len(desired.Spec.Template.Spec.Containers) > 0 {
+		existingEnvFrom := existing.Spec.Template.Spec.Containers[0].EnvFrom
+		desiredEnvFrom := desired.Spec.Template.Spec.Containers[0].EnvFrom
+
+		if len(existingEnvFrom) != len(desiredEnvFrom) {
+			return true
+		}
+
+		for i := range desiredEnvFrom {
+			if i >= len(existingEnvFrom) {
+				return true
+			}
+			// Compare ConfigMapRef
+			if desiredEnvFrom[i].ConfigMapRef != nil {
+				if existingEnvFrom[i].ConfigMapRef == nil ||
+					existingEnvFrom[i].ConfigMapRef.Name != desiredEnvFrom[i].ConfigMapRef.Name {
+					return true
+				}
+			}
+			// Compare SecretRef
+			if desiredEnvFrom[i].SecretRef != nil {
+				if existingEnvFrom[i].SecretRef == nil ||
+					existingEnvFrom[i].SecretRef.Name != desiredEnvFrom[i].SecretRef.Name {
+					return true
+				}
+			}
 		}
 	}
 
