@@ -18,7 +18,7 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -907,7 +907,7 @@ var _ = Describe("AgentGateway Controller", func() {
 		It("should generate valid KrakenD JSON configuration", func() {
 			utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
 
-			// Verify ConfigMap contains valid JSON
+			// Verify ConfigMap contains configuration
 			configMapName := agentGatewayName + "-krakend-config"
 			configMap := &corev1.ConfigMap{}
 			utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
@@ -915,31 +915,19 @@ var _ = Describe("AgentGateway Controller", func() {
 			krakendConfig := configMap.Data["krakend.json"]
 			Expect(krakendConfig).NotTo(BeEmpty())
 
-			// Validate it's valid JSON
-			var jsonData map[string]interface{}
-			err := json.Unmarshal([]byte(krakendConfig), &jsonData)
-			Expect(err).NotTo(HaveOccurred(), "ConfigMap should contain valid JSON")
+			// Note: Config contains KrakenD template placeholders, making it invalid JSON until KrakenD processes it
+			// Validate basic structure using string checks
 
-			// Validate specific KrakenD fields
-			Expect(jsonData["version"]).To(Equal(float64(3)))
-			Expect(jsonData["port"]).To(Equal(float64(DefaultGatewayPort)))
-			Expect(jsonData["name"]).To(Equal("agent-gateway-krakend"))
-			Expect(jsonData["endpoints"]).To(HaveLen(2)) // Agent card endpoint + A2A protocol endpoint
+			Expect(krakendConfig).To(ContainSubstring("\"version\": 3"))
+			Expect(krakendConfig).To(ContainSubstring(fmt.Sprintf("\"port\": %d", DefaultGatewayPort)))
+			Expect(krakendConfig).To(ContainSubstring("\"name\": \"agent-gateway-krakend\""))
 
-			endpoints, ok := jsonData["endpoints"].([]interface{})
-			Expect(ok).To(BeTrue())
-
-			// First endpoint should be agent card endpoint
-			agentCardEndpoint := endpoints[0].(map[string]interface{})
-			Expect(agentCardEndpoint["endpoint"]).To(Equal("/test-agent/.well-known/agent-card.json"))
-			Expect(agentCardEndpoint["method"]).To(Equal("GET"))
-			Expect(agentCardEndpoint["output_encoding"]).To(Equal("no-op"))
-
-			// Second endpoint should be A2A protocol endpoint
-			a2aEndpoint := endpoints[1].(map[string]interface{})
-			Expect(a2aEndpoint["endpoint"]).To(Equal("/test-agent"))
-			Expect(a2aEndpoint["method"]).To(Equal("POST"))
-			Expect(a2aEndpoint["output_encoding"]).To(Equal("no-op"))
+			// Validate endpoints are present
+			Expect(krakendConfig).To(ContainSubstring("\"/test-agent/.well-known/agent-card.json\""))
+			Expect(krakendConfig).To(ContainSubstring("\"method\": \"GET\""))
+			Expect(krakendConfig).To(ContainSubstring("\"/test-agent\""))
+			Expect(krakendConfig).To(ContainSubstring("\"method\": \"POST\""))
+			Expect(krakendConfig).To(ContainSubstring("\"output_encoding\": \"no-op\""))
 		})
 
 		It("should handle custom timeout configuration", func() {
@@ -961,11 +949,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			}, timeout, interval).Should(BeTrue())
 
 			krakendConfig := configMap.Data["krakend.json"]
-			var jsonData map[string]interface{}
-			err := json.Unmarshal([]byte(krakendConfig), &jsonData)
-			Expect(err).NotTo(HaveOccurred())
-
-			Expect(jsonData["timeout"]).To(Equal("45s"))
+			Expect(krakendConfig).To(ContainSubstring("\"timeout\": \"45s\""))
 		})
 
 		It("should generate proper service URLs for agents", func() {
@@ -977,19 +961,43 @@ var _ = Describe("AgentGateway Controller", func() {
 			utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
 
 			krakendConfig := configMap.Data["krakend.json"]
-			var jsonData map[string]interface{}
-			err := json.Unmarshal([]byte(krakendConfig), &jsonData)
-			Expect(err).NotTo(HaveOccurred())
+			Expect(krakendConfig).NotTo(BeEmpty())
 
-			endpoints := jsonData["endpoints"].([]interface{})
-			// Note: endpoints[0] is agent card endpoint, endpoints[1] is A2A protocol endpoint
-			a2aEndpoint := endpoints[1].(map[string]interface{})
-			backends := a2aEndpoint["backend"].([]interface{})
-			backend := backends[0].(map[string]interface{})
-			hosts := backend["host"].([]interface{})
+			// Validate backend service URL is present
+			Expect(krakendConfig).To(ContainSubstring("http://test-agent-service.default.svc.cluster.local:8080"))
+			Expect(krakendConfig).To(ContainSubstring("\"url_pattern\": \"\""))
+		})
 
-			Expect(hosts[0]).To(Equal("http://test-agent-service.default.svc.cluster.local:8080"))
-			Expect(backend["url_pattern"]).To(Equal("")) // Empty path is valid
+		It("should include OpenTelemetry configuration with template placeholders", func() {
+			utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
+
+			// Verify ConfigMap contains OTEL configuration
+			configMapName := agentGatewayName + "-krakend-config"
+			configMap := &corev1.ConfigMap{}
+			utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
+
+			krakendConfig := configMap.Data["krakend.json"]
+			Expect(krakendConfig).NotTo(BeEmpty())
+
+			// The generated JSON contains KrakenD template placeholders which are NOT quoted in the JSON
+			// This means the JSON is technically invalid until KrakenD processes it
+			// We verify the structure by checking the raw string content
+
+			// Verify the OTEL configuration structure exists in the raw JSON
+			Expect(krakendConfig).To(ContainSubstring("telemetry/opentelemetry"))
+			Expect(krakendConfig).To(ContainSubstring("\"service_name\":"))
+			Expect(krakendConfig).To(ContainSubstring("\"service_version\":"))
+			Expect(krakendConfig).To(ContainSubstring("\"exporters\":"))
+			Expect(krakendConfig).To(ContainSubstring("\"otlp\":"))
+			Expect(krakendConfig).To(ContainSubstring("\"name\": \"otel-collector\""))
+			Expect(krakendConfig).To(ContainSubstring("\"use_http\": true"))
+
+			// Verify host template placeholder is present
+			Expect(krakendConfig).To(ContainSubstring("\"host\":"))
+			Expect(krakendConfig).To(ContainSubstring("{{ (split \":\" (splitList \"://\" (env \"OTEL_EXPORTER_OTLP_ENDPOINT\") | last))._0 }}"))
+			// Verify port template placeholder is present
+			Expect(krakendConfig).To(ContainSubstring("\"port\":"))
+			Expect(krakendConfig).To(ContainSubstring("{{ int ((split \":\" (splitList \"://\" (env \"OTEL_EXPORTER_OTLP_ENDPOINT\") | last))._1) }}"))
 		})
 	})
 
