@@ -188,6 +188,7 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx create --name agent-gateway-krakend-operator-builder
 	$(CONTAINER_TOOL) buildx use agent-gateway-krakend-operator-builder
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) \
+    		  --build-arg VERSION=$(VERSION) \
     		  --tag $(IMG) \
     		  --tag $(IMAGE_TAG_BASE):latest \
     		  -f Dockerfile.cross .

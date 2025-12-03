@@ -549,7 +549,7 @@ func (r *AgentGatewayReconciler) createDeploymentForKrakend(agentGateway *agentr
 							Ports: []corev1.ContainerPort{containerPort},
 							Env: []corev1.EnvVar{
 								{
-									Name:  "FC_ENABLE",
+									Name:  "FC_ENABLE", // Enables krakend flexible configuration via env vars
 									Value: "1",
 								},
 							},
