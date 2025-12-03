@@ -40,8 +40,13 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 	})
 
 	BeforeAll(func() {
-		By("applying agent and gateway together")
+		By("applying OTEL configuration ConfigMap")
 		_, err := utils.Run(exec.Command("kubectl", "apply",
+			"-f", "config/samples/otel-tempo-config.yaml"))
+		Expect(err).NotTo(HaveOccurred(), "Failed to apply OTEL config")
+
+		By("applying agent and gateway together")
+		_, err = utils.Run(exec.Command("kubectl", "apply",
 			"-f", "config/samples/runtime_v1alpha1_gateway_with_agent.yaml"))
 		Expect(err).NotTo(HaveOccurred(), "Failed to apply agent and gateway samples")
 	})
@@ -50,6 +55,8 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		By("cleaning up test resources")
 		_, _ = utils.Run(exec.Command("kubectl", "delete",
 			"-f", "config/samples/runtime_v1alpha1_gateway_with_agent.yaml"))
+		_, _ = utils.Run(exec.Command("kubectl", "delete",
+			"-f", "config/samples/otel-tempo-config.yaml"))
 	})
 
 	It("should proxy A2A requests to agent", func() {
