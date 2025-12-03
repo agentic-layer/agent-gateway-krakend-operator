@@ -47,7 +47,7 @@ kind create cluster
 kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.1/cert-manager.yaml
 
 # Install the Agent Runtime Operator (provides CRDs)
-kubectl apply -f https://github.com/agentic-layer/agent-runtime-operator/releases/download/v0.9.0/install.yaml
+kubectl apply -f https://github.com/agentic-layer/agent-runtime-operator/releases/download/v0.13.0/install.yaml
 
 # Install the Agent Gateway operator
 kubectl apply -f  https://github.com/agentic-layer/agent-gateway-krakend-operator/releases/download/v0.3.0/install.yaml
