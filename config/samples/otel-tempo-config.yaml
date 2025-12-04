@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-tempo-config
+  namespace: default
+data:
+  OTEL_SDK_DISABLED: "false"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://lgtm.monitoring.svc.cluster.local:4318"

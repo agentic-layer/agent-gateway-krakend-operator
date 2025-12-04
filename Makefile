@@ -168,7 +168,7 @@ run: manifests generate fmt vet ## Run a controller from your host.
 # More info: https://docs.docker.com/develop/develop-images/build_enhancements/
 .PHONY: docker-build
 docker-build: ## Build docker image with the manager.
-	$(CONTAINER_TOOL) build -t ${IMG} .
+	$(CONTAINER_TOOL) build --build-arg VERSION=${VERSION} -t ${IMG} .
 
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
@@ -188,6 +188,7 @@ docker-buildx: ## Build and push docker image for the manager for cross-platform
 	- $(CONTAINER_TOOL) buildx create --name agent-gateway-krakend-operator-builder
 	$(CONTAINER_TOOL) buildx use agent-gateway-krakend-operator-builder
 	$(CONTAINER_TOOL) buildx build --push --platform=$(PLATFORMS) \
+    		  --build-arg VERSION=$(VERSION) \
     		  --tag $(IMG) \
     		  --tag $(IMAGE_TAG_BASE):latest \
     		  -f Dockerfile.cross .
@@ -382,7 +383,7 @@ kind-load:
 
 
 ## Agent Runtime CRD configuration
-AGENT_RUNTIME_CRD_VERSION ?= 0.9.0
+AGENT_RUNTIME_CRD_VERSION ?= 0.14.0
 AGENT_RUNTIME_CRD_DIR = config/crd/external
 AGENT_RUNTIME_CRD_BASE_URL = https://raw.githubusercontent.com/agentic-layer/agent-runtime-operator/refs/tags/v$(AGENT_RUNTIME_CRD_VERSION)/config/crd/bases
 AGENT_RUNTIME_CRD_FILES = runtime.agentic-layer.ai_agentgateways.yaml runtime.agentic-layer.ai_agentgatewayclasses.yaml runtime.agentic-layer.ai_agents.yaml

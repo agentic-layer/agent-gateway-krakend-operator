@@ -16,4 +16,7 @@ metadata:
   name: agent-gateway
 spec:
   agentGatewayClassName: krakend
+  envFrom:
+    - configMapRef:
+        name: otel-tempo-config
 ---
