@@ -1,0 +1,86 @@
+{
+    "$schema": "https://www.krakend.io/schema/v2.10/krakend.json",
+    "version": 3,
+	"plugin": {
+		"pattern": ".so",
+		"folder": "/unleash/tentacles/"
+	},
+    "port": 8080,
+    "extra_config": {
+		"plugin/http-server": {
+			"@comment_name": "Name order defines handler order. Last entry is outermost/first handler.",
+			"name": [
+				"agentcard-rw",
+				"openai-a2a"
+			]
+		},
+        "router": {
+            "disable_access_log": false,
+            "hide_version_header": true
+        },
+        "@comment": "OpenTelemetry configuration for distributed tracing. trace_sample_rate defaults to 1.0 (100%).",
+        "telemetry/opentelemetry": {
+            "service_name": "test-agentgateway",
+            "service_version": "dev",
+            "exporters": {
+                "otlp": [
+                    {
+                        "name": "otel-collector",
+                        "host": "{{ (split ":" (splitList "://" (env "OTEL_EXPORTER_OTLP_ENDPOINT") | last))._0 }}",
+                        "port": {{ int ((split ":" (splitList "://" (env "OTEL_EXPORTER_OTLP_ENDPOINT") | last))._1) }},
+                        "use_http": true
+                    }
+                ]
+            },
+            "layers": {
+                "global": {
+                    "disable_metrics": false,
+                    "disable_traces": false,
+                    "disable_propagation": false
+                },
+                "proxy": {
+                    "disable_metrics": false,
+                    "disable_traces": false
+                },
+                "backend": {
+                    "metrics": {
+                        "disable_stage": false,
+                        "round_trip": true,
+                        "read_payload": true,
+                        "detailed_connection": true
+                    },
+                    "traces": {
+                        "disable_stage": false,
+                        "round_trip": true,
+                        "read_payload": true,
+                        "detailed_connection": true
+                    }
+                }
+            }
+        }
+    },
+    "timeout": "6m0s",
+    "output_encoding": "json",
+    "name": "agent-gateway-krakend",
+    "endpoints": [
+        {
+            "endpoint": "/test-agent/test-agent/.well-known/agent-card.json",
+            "output_encoding": "no-op",
+            "method": "GET",
+            "backend": [
+                {
+                    "host": ["http://test-agent-service.default.svc.cluster.local:8080"],
+                    "url_pattern": "/test-agent/.well-known/agent-card.json"
+                }]
+        },
+        {
+            "endpoint": "/test-agent",
+            "output_encoding": "no-op",
+            "method": "POST",
+            "backend": [
+                {
+                    "host": ["http://test-agent-service.default.svc.cluster.local:8080"],
+                    "url_pattern": "/test-agent"
+                }]
+        }]
+}

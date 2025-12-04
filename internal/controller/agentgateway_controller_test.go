@@ -18,7 +18,8 @@ package controller
 
 import (
 	"context"
-	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -39,6 +40,28 @@ import (
 const (
 	differentClassName = "different-class"
 )
+
+// readExpectedConfig reads a sample config file from testdata directory
+func readExpectedConfig(filename string) string {
+	path := filepath.Join("testdata", filename)
+	data, err := os.ReadFile(path)
+	Expect(err).NotTo(HaveOccurred(), "Failed to read expected config file: %s", filename)
+	return string(data)
+}
+
+// normalizeConfigWhitespace removes formatting differences for comparison
+// Note: Config is NOT valid JSON due to KrakenD template placeholders, so we normalize as text
+func normalizeConfigWhitespace(config string) string {
+	lines := strings.Split(config, "\n")
+	var normalized []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			normalized = append(normalized, trimmed)
+		}
+	}
+	return strings.Join(normalized, "\n")
+}
 
 var _ = Describe("AgentGateway Controller", func() {
 	var (
@@ -631,8 +654,15 @@ var _ = Describe("AgentGateway Controller", func() {
 
 			Expect(configMap.Data).To(HaveKey("krakend.json"))
 			krakendConfig := configMap.Data["krakend.json"]
-			Expect(krakendConfig).To(ContainSubstring("/test-agent"))
-			Expect(krakendConfig).To(ContainSubstring("http://test-agent-service.default.svc.cluster.local:8080"))
+
+			// Verify the config matches expected multi-agent config
+			// Note: This uses multi-agent config because the agent URL includes a path (/test-agent/)
+			expectedConfig := readExpectedConfig("expected-multi-agent-config.json")
+			actualNormalized := normalizeConfigWhitespace(krakendConfig)
+			expectedNormalized := normalizeConfigWhitespace(expectedConfig)
+
+			Expect(actualNormalized).To(Equal(expectedNormalized),
+				"ConfigMap should contain expected agent endpoints")
 		})
 
 		It("should only include exposed agents in configuration", func() {
@@ -648,8 +678,15 @@ var _ = Describe("AgentGateway Controller", func() {
 			utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
 
 			krakendConfig := configMap.Data["krakend.json"]
-			Expect(krakendConfig).To(ContainSubstring("/test-agent"))
-			Expect(krakendConfig).NotTo(ContainSubstring("/hidden-agent"))
+
+			// Compare against multi-agent expected config (which should only have test-agent)
+			expectedConfig := readExpectedConfig("expected-multi-agent-config.json")
+
+			actualNormalized := normalizeConfigWhitespace(krakendConfig)
+			expectedNormalized := normalizeConfigWhitespace(expectedConfig)
+
+			Expect(actualNormalized).To(Equal(expectedNormalized),
+				"Generated config should match expected multi-agent config with only exposed agent")
 		})
 	})
 
@@ -904,32 +941,6 @@ var _ = Describe("AgentGateway Controller", func() {
 			utils.SetAgentUrl(ctx, k8sClient, agent, "http://test-agent-service.default.svc.cluster.local:8080/.well-known/agent-card.json")
 		})
 
-		It("should generate valid KrakenD JSON configuration", func() {
-			utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
-
-			// Verify ConfigMap contains configuration
-			configMapName := agentGatewayName + "-krakend-config"
-			configMap := &corev1.ConfigMap{}
-			utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
-
-			krakendConfig := configMap.Data["krakend.json"]
-			Expect(krakendConfig).NotTo(BeEmpty())
-
-			// Note: Config contains KrakenD template placeholders, making it invalid JSON until KrakenD processes it
-			// Validate basic structure using string checks
-
-			Expect(krakendConfig).To(ContainSubstring("\"version\": 3"))
-			Expect(krakendConfig).To(ContainSubstring(fmt.Sprintf("\"port\": %d", DefaultGatewayPort)))
-			Expect(krakendConfig).To(ContainSubstring("\"name\": \"agent-gateway-krakend\""))
-
-			// Validate endpoints are present
-			Expect(krakendConfig).To(ContainSubstring("\"/test-agent/.well-known/agent-card.json\""))
-			Expect(krakendConfig).To(ContainSubstring("\"method\": \"GET\""))
-			Expect(krakendConfig).To(ContainSubstring("\"/test-agent\""))
-			Expect(krakendConfig).To(ContainSubstring("\"method\": \"POST\""))
-			Expect(krakendConfig).To(ContainSubstring("\"output_encoding\": \"no-op\""))
-		})
-
 		It("should handle custom timeout configuration", func() {
 			// Update AgentGateway with custom timeout
 			agentGateway.Spec.Timeout = &metav1.Duration{Duration: 45 * time.Second}
@@ -949,55 +960,22 @@ var _ = Describe("AgentGateway Controller", func() {
 			}, timeout, interval).Should(BeTrue())
 
 			krakendConfig := configMap.Data["krakend.json"]
+
+			// Verify custom timeout is present
 			Expect(krakendConfig).To(ContainSubstring("\"timeout\": \"45s\""))
-		})
 
-		It("should generate proper service URLs for agents", func() {
-			utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
+			// Verify rest of config matches baseline (excluding timeout line)
+			expectedConfig := readExpectedConfig("expected-baseline-config.json")
+			expectedWithCustomTimeout := strings.Replace(expectedConfig,
+				`"timeout": "6m0s"`,
+				`"timeout": "45s"`,
+				1)
 
-			// Verify ConfigMap contains proper service URL
-			configMapName := agentGatewayName + "-krakend-config"
-			configMap := &corev1.ConfigMap{}
-			utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
+			actualNormalized := normalizeConfigWhitespace(krakendConfig)
+			expectedNormalized := normalizeConfigWhitespace(expectedWithCustomTimeout)
 
-			krakendConfig := configMap.Data["krakend.json"]
-			Expect(krakendConfig).NotTo(BeEmpty())
-
-			// Validate backend service URL is present
-			Expect(krakendConfig).To(ContainSubstring("http://test-agent-service.default.svc.cluster.local:8080"))
-			Expect(krakendConfig).To(ContainSubstring("\"url_pattern\": \"\""))
-		})
-
-		It("should include OpenTelemetry configuration with template placeholders", func() {
-			utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
-
-			// Verify ConfigMap contains OTEL configuration
-			configMapName := agentGatewayName + "-krakend-config"
-			configMap := &corev1.ConfigMap{}
-			utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
-
-			krakendConfig := configMap.Data["krakend.json"]
-			Expect(krakendConfig).NotTo(BeEmpty())
-
-			// The generated JSON contains KrakenD template placeholders which are NOT quoted in the JSON
-			// This means the JSON is technically invalid until KrakenD processes it
-			// We verify the structure by checking the raw string content
-
-			// Verify the OTEL configuration structure exists in the raw JSON
-			Expect(krakendConfig).To(ContainSubstring("telemetry/opentelemetry"))
-			Expect(krakendConfig).To(ContainSubstring("\"service_name\":"))
-			Expect(krakendConfig).To(ContainSubstring("\"service_version\":"))
-			Expect(krakendConfig).To(ContainSubstring("\"exporters\":"))
-			Expect(krakendConfig).To(ContainSubstring("\"otlp\":"))
-			Expect(krakendConfig).To(ContainSubstring("\"name\": \"otel-collector\""))
-			Expect(krakendConfig).To(ContainSubstring("\"use_http\": true"))
-
-			// Verify host template placeholder is present
-			Expect(krakendConfig).To(ContainSubstring("\"host\":"))
-			Expect(krakendConfig).To(ContainSubstring("{{ (split \":\" (splitList \"://\" (env \"OTEL_EXPORTER_OTLP_ENDPOINT\") | last))._0 }}"))
-			// Verify port template placeholder is present
-			Expect(krakendConfig).To(ContainSubstring("\"port\":"))
-			Expect(krakendConfig).To(ContainSubstring("{{ int ((split \":\" (splitList \"://\" (env \"OTEL_EXPORTER_OTLP_ENDPOINT\") | last))._1) }}"))
+			Expect(actualNormalized).To(Equal(expectedNormalized),
+				"Generated config with custom timeout should match expected baseline with timeout updated")
 		})
 	})
 
