@@ -35,7 +35,7 @@ const krakendConfigTemplate = `{
         "router": {
             "disable_access_log": false,
             "hide_version_header": true
-        },
+        }{{ "{{if env \"OTEL_EXPORTER_OTLP_ENDPOINT\"}}" }},
         "@comment": "OpenTelemetry configuration for distributed tracing. trace_sample_rate defaults to 1.0 (100%).",
         "telemetry/opentelemetry": {
             "service_name": "{{.DeploymentName}}",
@@ -75,7 +75,7 @@ const krakendConfigTemplate = `{
                     }
                 }
             }
-        }
+        }{{ "{{end}}" }}
     },
     "timeout": "{{.Timeout}}",
     "output_encoding": "json",
