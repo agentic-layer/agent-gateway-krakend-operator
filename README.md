@@ -12,8 +12,7 @@ This operator works as a companion to the [Agent Runtime Operator](https://githu
 - [End-to-End (E2E) Testing](#end-to-end-e2e-testing)
 - [Testing Tools and Configuration](#testing-tools-and-configuration)
 - [Sample Data](#sample-data)
-- [Contributing](#contributing)
-- [Project Distribution](#project-distribution)
+- [Contribution](#contribution)
 
 ----
 
