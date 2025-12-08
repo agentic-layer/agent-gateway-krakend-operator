@@ -111,6 +111,25 @@ spec:
     - type: A2A
 ```
 
+The operator will:
+1. Discover all exposed agents across all namespaces
+2. Generate KrakenD endpoint configurations for each agent
+3. Create a ConfigMap with the complete KrakenD configuration
+4. Deploy a KrakenD deployment that serves the unified gateway
+5. Automatically create RBAC resources (ServiceAccount, ClusterRole, ClusterRoleBinding) for the gateway to access Agent CRDs
+
+### Default AgentGatewayClass
+
+The operator installs a `AgentGatewayClass` resource:
+
+```yaml
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: AgentGatewayClass
+metadata:
+  name: krakend
+spec:
+  controller: runtime.agentic-layer.ai/agent-gateway-controller
+```
 
 ## End-to-End (E2E) Testing
 
@@ -152,7 +171,34 @@ KIND_CLUSTER=ai-gateway-litellm-test-e2e go test ./test/e2e/ -v -ginkgo.v
 make cleanup-test-e2e
 ```
 
+### E2E Test Coverage
+
+**E2E Test Features:**
+- OpenAI API `/models` and `/chat/completions` endpoints
+- Unique agent routing
+- Namespace conflict resolution
+- Agent gateway deployment verification
+- KrakenD configuration generation
+
 ## Testing Tools and Configuration
+
+The project includes comprehensive test coverage:
+
+- **Unit Tests**: Complete test suite for the controller with AgentGatewayClass responsibility checks
+- **Integration Tests**: Tests for Agent discovery and KrakenD configuration generation
+- **E2E Tests**: End-to-end tests for OpenAI API flows and namespace conflict resolution
+- **Ginkgo/Gomega**: BDD-style testing framework
+- **EnvTest**: Kubernetes API server testing environment
+
+Run tests with:
+
+```bash
+# Run unit and integration tests
+make test
+
+# Run E2E tests in kind cluster
+make test-e2e
+```
 
 ## Sample Data
 

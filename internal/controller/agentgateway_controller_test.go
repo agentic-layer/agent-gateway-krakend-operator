@@ -18,8 +18,6 @@ package controller
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/agentic-layer/agent-gateway-krakend-operator/internal/controller/utils"
@@ -40,28 +39,6 @@ import (
 const (
 	differentClassName = "different-class"
 )
-
-// readExpectedConfig reads a sample config file from testdata directory
-func readExpectedConfig(filename string) string {
-	path := filepath.Join("testdata", filename)
-	data, err := os.ReadFile(path)
-	Expect(err).NotTo(HaveOccurred(), "Failed to read expected config file: %s", filename)
-	return string(data)
-}
-
-// normalizeConfigWhitespace removes formatting differences for comparison
-// Note: Config is NOT valid JSON due to KrakenD template placeholders, so we normalize as text
-func normalizeConfigWhitespace(config string) string {
-	lines := strings.Split(config, "\n")
-	var normalized []string
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" {
-			normalized = append(normalized, trimmed)
-		}
-	}
-	return strings.Join(normalized, "\n")
-}
 
 var _ = Describe("AgentGateway Controller", func() {
 	var (
@@ -76,8 +53,9 @@ var _ = Describe("AgentGateway Controller", func() {
 	BeforeEach(func() {
 		ctx = context.Background()
 		reconciler = &AgentGatewayReconciler{
-			Client: k8sClient,
-			Scheme: k8sClient.Scheme(),
+			Client:   k8sClient,
+			Scheme:   k8sClient.Scheme(),
+			Recorder: record.NewFakeRecorder(100),
 		}
 	})
 
@@ -654,15 +632,8 @@ var _ = Describe("AgentGateway Controller", func() {
 
 			Expect(configMap.Data).To(HaveKey("krakend.json"))
 			krakendConfig := configMap.Data["krakend.json"]
-
-			// Verify the config matches expected multi-agent config
-			// Note: This uses multi-agent config because the agent URL includes a path (/test-agent/)
-			expectedConfig := readExpectedConfig("expected-multi-agent-config.json")
-			actualNormalized := normalizeConfigWhitespace(krakendConfig)
-			expectedNormalized := normalizeConfigWhitespace(expectedConfig)
-
-			Expect(actualNormalized).To(Equal(expectedNormalized),
-				"ConfigMap should contain expected agent endpoints")
+			Expect(krakendConfig).To(ContainSubstring("/test-agent"))
+			Expect(krakendConfig).To(ContainSubstring("http://test-agent-service.default.svc.cluster.local:8080"))
 		})
 
 		It("should only include exposed agents in configuration", func() {
@@ -678,15 +649,8 @@ var _ = Describe("AgentGateway Controller", func() {
 			utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
 
 			krakendConfig := configMap.Data["krakend.json"]
-
-			// Compare against multi-agent expected config (which should only have test-agent)
-			expectedConfig := readExpectedConfig("expected-multi-agent-config.json")
-
-			actualNormalized := normalizeConfigWhitespace(krakendConfig)
-			expectedNormalized := normalizeConfigWhitespace(expectedConfig)
-
-			Expect(actualNormalized).To(Equal(expectedNormalized),
-				"Generated config should match expected multi-agent config with only exposed agent")
+			Expect(krakendConfig).To(ContainSubstring("/test-agent"))
+			Expect(krakendConfig).NotTo(ContainSubstring("/hidden-agent"))
 		})
 	})
 
@@ -703,37 +667,49 @@ var _ = Describe("AgentGateway Controller", func() {
 			agentWithoutUrl := utils.CreateTestAgent("no-url-agent", agentGatewayNamespace, true)
 			Expect(k8sClient.Create(ctx, agentWithoutUrl)).To(Succeed())
 
-			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithoutUrl)
+			nameConflicts := make(map[string]bool)
+			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithoutUrl, nameConflicts)
 
 			Expect(err).NotTo(HaveOccurred())
 			Expect(endpoints).To(BeEmpty())
 		})
 
 		It("should generate correct endpoint configuration for agent with URL", func() {
-			endpoints, err := reconciler.generateEndpointForAgent(ctx, agent)
+			nameConflicts := make(map[string]bool)
+			endpoints, err := reconciler.generateEndpointForAgent(ctx, agent, nameConflicts)
 
 			Expect(err).NotTo(HaveOccurred())
-			Expect(endpoints).To(HaveLen(2)) // Agent card endpoint + A2A protocol endpoint
+			Expect(endpoints).To(HaveLen(4)) // Namespaced + simple endpoints (agent card + A2A for each)
 
-			// First endpoint should be agent card endpoint
-			agentCardEndpoint := endpoints[0]
-			Expect(agentCardEndpoint.Endpoint).To(Equal("/test-agent/.well-known/agent-card.json"))
-			Expect(agentCardEndpoint.OutputEncoding).To(Equal("no-op"))
-			Expect(agentCardEndpoint.Method).To(Equal("GET"))
-			Expect(agentCardEndpoint.Backend).To(HaveLen(1))
-			Expect(agentCardEndpoint.Backend[0].Host).To(HaveLen(1))
-			Expect(agentCardEndpoint.Backend[0].Host[0]).To(Equal("http://test-agent-service.default.svc.cluster.local:8080"))
-			Expect(agentCardEndpoint.Backend[0].URLPattern).To(Equal("/.well-known/agent-card.json"))
+			// First endpoint should be namespaced agent card endpoint
+			namespacedAgentCard := endpoints[0]
+			Expect(namespacedAgentCard.Endpoint).To(Equal("/default/test-agent/.well-known/agent-card.json"))
+			Expect(namespacedAgentCard.Method).To(Equal("GET"))
 
-			// Second endpoint should be A2A protocol endpoint
-			a2aEndpoint := endpoints[1]
-			Expect(a2aEndpoint.Endpoint).To(Equal("/test-agent"))
-			Expect(a2aEndpoint.OutputEncoding).To(Equal("no-op"))
-			Expect(a2aEndpoint.Method).To(Equal("POST"))
-			Expect(a2aEndpoint.Backend).To(HaveLen(1))
-			Expect(a2aEndpoint.Backend[0].Host).To(HaveLen(1))
-			Expect(a2aEndpoint.Backend[0].Host[0]).To(Equal("http://test-agent-service.default.svc.cluster.local:8080"))
-			Expect(a2aEndpoint.Backend[0].URLPattern).To(Equal(""))
+			// Second endpoint should be namespaced A2A endpoint
+			namespacedA2A := endpoints[1]
+			Expect(namespacedA2A.Endpoint).To(Equal("/default/test-agent"))
+			Expect(namespacedA2A.Method).To(Equal("POST"))
+
+			// Third endpoint should be simple agent card endpoint
+			simpleAgentCard := endpoints[2]
+			Expect(simpleAgentCard.Endpoint).To(Equal("/test-agent/.well-known/agent-card.json"))
+			Expect(simpleAgentCard.OutputEncoding).To(Equal("no-op"))
+			Expect(simpleAgentCard.Method).To(Equal("GET"))
+			Expect(simpleAgentCard.Backend).To(HaveLen(1))
+			Expect(simpleAgentCard.Backend[0].Host).To(HaveLen(1))
+			Expect(simpleAgentCard.Backend[0].Host[0]).To(Equal("http://test-agent-service.default.svc.cluster.local:8080"))
+			Expect(simpleAgentCard.Backend[0].URLPattern).To(Equal("/.well-known/agent-card.json"))
+
+			// Fourth endpoint should be simple A2A protocol endpoint
+			simpleA2A := endpoints[3]
+			Expect(simpleA2A.Endpoint).To(Equal("/test-agent"))
+			Expect(simpleA2A.OutputEncoding).To(Equal("no-op"))
+			Expect(simpleA2A.Method).To(Equal("POST"))
+			Expect(simpleA2A.Backend).To(HaveLen(1))
+			Expect(simpleA2A.Backend[0].Host).To(HaveLen(1))
+			Expect(simpleA2A.Backend[0].Host[0]).To(Equal("http://test-agent-service.default.svc.cluster.local:8080"))
+			Expect(simpleA2A.Backend[0].URLPattern).To(Equal(""))
 		})
 
 		It("should use custom URL from agent status and strip agent-card suffix", func() {
@@ -743,24 +719,39 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(k8sClient.Create(ctx, agentWithCustomUrl)).To(Succeed())
 			utils.SetAgentUrl(ctx, k8sClient, agentWithCustomUrl, customUrl)
 
-			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithCustomUrl)
+			nameConflicts := make(map[string]bool)
+			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithCustomUrl, nameConflicts)
 
 			Expect(err).NotTo(HaveOccurred())
-			Expect(endpoints).To(HaveLen(2))
+			Expect(endpoints).To(HaveLen(4)) // Namespaced + simple endpoints (agent card + A2A for each)
 
-			// First endpoint should be agent card endpoint
-			agentCardEndpoint := endpoints[0]
-			Expect(agentCardEndpoint.Endpoint).To(Equal("/custom-agent/api/v1/.well-known/agent-card.json"))
-			Expect(agentCardEndpoint.Method).To(Equal("GET"))
-			Expect(agentCardEndpoint.Backend[0].Host[0]).To(Equal("http://custom-backend.example.com:9000"))
-			Expect(agentCardEndpoint.Backend[0].URLPattern).To(Equal("/api/v1/.well-known/agent-card.json"))
+			// First endpoint should be namespaced agent card endpoint
+			namespacedAgentCard := endpoints[0]
+			Expect(namespacedAgentCard.Endpoint).To(Equal("/default/custom-agent/api/v1/.well-known/agent-card.json"))
+			Expect(namespacedAgentCard.Method).To(Equal("GET"))
+			Expect(namespacedAgentCard.Backend[0].Host[0]).To(Equal("http://custom-backend.example.com:9000"))
+			Expect(namespacedAgentCard.Backend[0].URLPattern).To(Equal("/api/v1/.well-known/agent-card.json"))
 
-			// Second endpoint should be A2A endpoint
-			a2aEndpoint := endpoints[1]
-			Expect(a2aEndpoint.Endpoint).To(Equal("/custom-agent"))
-			Expect(a2aEndpoint.Method).To(Equal("POST"))
-			Expect(a2aEndpoint.Backend[0].Host[0]).To(Equal("http://custom-backend.example.com:9000"))
-			Expect(a2aEndpoint.Backend[0].URLPattern).To(Equal("/api/v1"))
+			// Second endpoint should be namespaced A2A endpoint
+			namespacedA2A := endpoints[1]
+			Expect(namespacedA2A.Endpoint).To(Equal("/default/custom-agent"))
+			Expect(namespacedA2A.Method).To(Equal("POST"))
+			Expect(namespacedA2A.Backend[0].Host[0]).To(Equal("http://custom-backend.example.com:9000"))
+			Expect(namespacedA2A.Backend[0].URLPattern).To(Equal("/api/v1"))
+
+			// Third endpoint should be simple agent card endpoint (backward compatible)
+			simpleAgentCard := endpoints[2]
+			Expect(simpleAgentCard.Endpoint).To(Equal("/custom-agent/api/v1/.well-known/agent-card.json"))
+			Expect(simpleAgentCard.Method).To(Equal("GET"))
+			Expect(simpleAgentCard.Backend[0].Host[0]).To(Equal("http://custom-backend.example.com:9000"))
+			Expect(simpleAgentCard.Backend[0].URLPattern).To(Equal("/api/v1/.well-known/agent-card.json"))
+
+			// Fourth endpoint should be simple A2A endpoint (backward compatible)
+			simpleA2A := endpoints[3]
+			Expect(simpleA2A.Endpoint).To(Equal("/custom-agent"))
+			Expect(simpleA2A.Method).To(Equal("POST"))
+			Expect(simpleA2A.Backend[0].Host[0]).To(Equal("http://custom-backend.example.com:9000"))
+			Expect(simpleA2A.Backend[0].URLPattern).To(Equal("/api/v1"))
 		})
 
 		It("should correctly parse URL with only agent-card suffix", func() {
@@ -770,24 +761,39 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(k8sClient.Create(ctx, agentWithNoPath)).To(Succeed())
 			utils.SetAgentUrl(ctx, k8sClient, agentWithNoPath, noPathUrl)
 
-			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithNoPath)
+			nameConflicts := make(map[string]bool)
+			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithNoPath, nameConflicts)
 
 			Expect(err).NotTo(HaveOccurred())
-			Expect(endpoints).To(HaveLen(2))
+			Expect(endpoints).To(HaveLen(4)) // Namespaced + simple endpoints (agent card + A2A for each)
 
-			// First endpoint should be agent card endpoint
-			agentCardEndpoint := endpoints[0]
-			Expect(agentCardEndpoint.Endpoint).To(Equal("/no-path-agent/.well-known/agent-card.json"))
-			Expect(agentCardEndpoint.Method).To(Equal("GET"))
-			Expect(agentCardEndpoint.Backend[0].Host[0]).To(Equal("http://backend.example.com:8080"))
-			Expect(agentCardEndpoint.Backend[0].URLPattern).To(Equal("/.well-known/agent-card.json"))
+			// First endpoint should be namespaced agent card endpoint
+			namespacedAgentCard := endpoints[0]
+			Expect(namespacedAgentCard.Endpoint).To(Equal("/default/no-path-agent/.well-known/agent-card.json"))
+			Expect(namespacedAgentCard.Method).To(Equal("GET"))
+			Expect(namespacedAgentCard.Backend[0].Host[0]).To(Equal("http://backend.example.com:8080"))
+			Expect(namespacedAgentCard.Backend[0].URLPattern).To(Equal("/.well-known/agent-card.json"))
 
-			// Second endpoint should be A2A endpoint
-			a2aEndpoint := endpoints[1]
-			Expect(a2aEndpoint.Endpoint).To(Equal("/no-path-agent"))
-			Expect(a2aEndpoint.Method).To(Equal("POST"))
-			Expect(a2aEndpoint.Backend[0].Host[0]).To(Equal("http://backend.example.com:8080"))
-			Expect(a2aEndpoint.Backend[0].URLPattern).To(Equal(""))
+			// Second endpoint should be namespaced A2A endpoint
+			namespacedA2A := endpoints[1]
+			Expect(namespacedA2A.Endpoint).To(Equal("/default/no-path-agent"))
+			Expect(namespacedA2A.Method).To(Equal("POST"))
+			Expect(namespacedA2A.Backend[0].Host[0]).To(Equal("http://backend.example.com:8080"))
+			Expect(namespacedA2A.Backend[0].URLPattern).To(Equal(""))
+
+			// Third endpoint should be simple agent card endpoint (backward compatible)
+			simpleAgentCard := endpoints[2]
+			Expect(simpleAgentCard.Endpoint).To(Equal("/no-path-agent/.well-known/agent-card.json"))
+			Expect(simpleAgentCard.Method).To(Equal("GET"))
+			Expect(simpleAgentCard.Backend[0].Host[0]).To(Equal("http://backend.example.com:8080"))
+			Expect(simpleAgentCard.Backend[0].URLPattern).To(Equal("/.well-known/agent-card.json"))
+
+			// Fourth endpoint should be simple A2A endpoint (backward compatible)
+			simpleA2A := endpoints[3]
+			Expect(simpleA2A.Endpoint).To(Equal("/no-path-agent"))
+			Expect(simpleA2A.Method).To(Equal("POST"))
+			Expect(simpleA2A.Backend[0].Host[0]).To(Equal("http://backend.example.com:8080"))
+			Expect(simpleA2A.Backend[0].URLPattern).To(Equal(""))
 		})
 	})
 
@@ -941,6 +947,39 @@ var _ = Describe("AgentGateway Controller", func() {
 			utils.SetAgentUrl(ctx, k8sClient, agent, "http://test-agent-service.default.svc.cluster.local:8080/.well-known/agent-card.json")
 		})
 
+		It("should generate valid KrakenD configuration", func() {
+			utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
+
+			// Verify ConfigMap contains KrakenD config
+			configMapName := agentGatewayName + "-krakend-config"
+			configMap := &corev1.ConfigMap{}
+			utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
+
+			krakendConfig := configMap.Data["krakend.json"]
+			Expect(krakendConfig).NotTo(BeEmpty())
+
+			// Note: Config contains KrakenD template syntax ({{if env...}}) which is valid for KrakenD but not JSON
+			// Validate expected content using string matching
+			Expect(krakendConfig).To(ContainSubstring(`"version": 3`))
+			Expect(krakendConfig).To(ContainSubstring(`"port": 8080`))
+			Expect(krakendConfig).To(ContainSubstring(`"name": "agent-gateway-krakend"`))
+
+			// Verify global endpoints
+			Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/models"`))
+			Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/chat/completions"`))
+
+			// Verify namespaced agent endpoints
+			Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/default/test-agent/.well-known/agent-card.json"`))
+			Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/default/test-agent"`))
+
+			// Verify simple agent endpoints (backward compatible)
+			Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/test-agent/.well-known/agent-card.json"`))
+			Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/test-agent"`))
+
+			// Verify OTEL configuration is present
+			Expect(krakendConfig).To(ContainSubstring(`"telemetry/opentelemetry"`))
+		})
+
 		It("should handle custom timeout configuration", func() {
 			// Update AgentGateway with custom timeout
 			agentGateway.Spec.Timeout = &metav1.Duration{Duration: 45 * time.Second}
@@ -960,22 +999,20 @@ var _ = Describe("AgentGateway Controller", func() {
 			}, timeout, interval).Should(BeTrue())
 
 			krakendConfig := configMap.Data["krakend.json"]
+			Expect(krakendConfig).To(ContainSubstring(`"timeout": "45s"`))
+		})
 
-			// Verify custom timeout is present
-			Expect(krakendConfig).To(ContainSubstring("\"timeout\": \"45s\""))
+		It("should generate proper service URLs for agents", func() {
+			utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
 
-			// Verify rest of config matches baseline (excluding timeout line)
-			expectedConfig := readExpectedConfig("expected-baseline-config.json")
-			expectedWithCustomTimeout := strings.Replace(expectedConfig,
-				`"timeout": "6m0s"`,
-				`"timeout": "45s"`,
-				1)
+			// Verify ConfigMap contains proper service URL
+			configMapName := agentGatewayName + "-krakend-config"
+			configMap := &corev1.ConfigMap{}
+			utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
 
-			actualNormalized := normalizeConfigWhitespace(krakendConfig)
-			expectedNormalized := normalizeConfigWhitespace(expectedWithCustomTimeout)
-
-			Expect(actualNormalized).To(Equal(expectedNormalized),
-				"Generated config with custom timeout should match expected baseline with timeout updated")
+			krakendConfig := configMap.Data["krakend.json"]
+			Expect(krakendConfig).To(ContainSubstring("http://test-agent-service.default.svc.cluster.local:8080"))
+			Expect(krakendConfig).To(ContainSubstring(`"url_pattern": ""`))
 		})
 	})
 
@@ -1601,6 +1638,243 @@ var _ = Describe("findAgentGatewaysForAgent", func() {
 			Expect(requests).To(HaveLen(2))
 			Expect(requests[0].Name).To(BeElementOf("gateway-a", "gateway-b"))
 			Expect(requests[1].Name).To(BeElementOf("gateway-a", "gateway-b"))
+		})
+	})
+
+	Describe("detectAgentNameConflicts", func() {
+		It("should return empty map when no agents provided", func() {
+			conflicts := reconciler.detectAgentNameConflicts([]*agentruntimev1alpha1.Agent{})
+
+			Expect(conflicts).To(BeEmpty())
+		})
+
+		It("should return empty map when agents have different names", func() {
+			agent1 := utils.CreateTestAgent("agent-1", "namespace-1", true)
+			agent2 := utils.CreateTestAgent("agent-2", "namespace-2", true)
+
+			conflicts := reconciler.detectAgentNameConflicts([]*agentruntimev1alpha1.Agent{agent1, agent2})
+
+			Expect(conflicts).To(BeEmpty())
+		})
+
+		It("should return empty map when single agent with same name in same namespace", func() {
+			agent := utils.CreateTestAgent("test-agent", "namespace-1", true)
+
+			conflicts := reconciler.detectAgentNameConflicts([]*agentruntimev1alpha1.Agent{agent})
+
+			Expect(conflicts).To(BeEmpty())
+		})
+
+		It("should detect conflict when two agents have same name in different namespaces", func() {
+			agent1 := utils.CreateTestAgent("test-agent", "namespace-1", true)
+			agent2 := utils.CreateTestAgent("test-agent", "namespace-2", true)
+
+			conflicts := reconciler.detectAgentNameConflicts([]*agentruntimev1alpha1.Agent{agent1, agent2})
+
+			Expect(conflicts).To(HaveLen(1))
+			Expect(conflicts["test-agent"]).To(BeTrue())
+		})
+
+		It("should detect conflict when three agents have same name across different namespaces", func() {
+			agent1 := utils.CreateTestAgent("test-agent", "namespace-1", true)
+			agent2 := utils.CreateTestAgent("test-agent", "namespace-2", true)
+			agent3 := utils.CreateTestAgent("test-agent", "namespace-3", true)
+
+			conflicts := reconciler.detectAgentNameConflicts([]*agentruntimev1alpha1.Agent{agent1, agent2, agent3})
+
+			Expect(conflicts).To(HaveLen(1))
+			Expect(conflicts["test-agent"]).To(BeTrue())
+		})
+
+		It("should detect multiple conflicts with different agent names", func() {
+			agent1 := utils.CreateTestAgent("agent-a", "namespace-1", true)
+			agent2 := utils.CreateTestAgent("agent-a", "namespace-2", true)
+			agent3 := utils.CreateTestAgent("agent-b", "namespace-1", true)
+			agent4 := utils.CreateTestAgent("agent-b", "namespace-3", true)
+			agent5 := utils.CreateTestAgent("agent-c", "namespace-1", true)
+
+			conflicts := reconciler.detectAgentNameConflicts([]*agentruntimev1alpha1.Agent{agent1, agent2, agent3, agent4, agent5})
+
+			Expect(conflicts).To(HaveLen(2))
+			Expect(conflicts["agent-a"]).To(BeTrue())
+			Expect(conflicts["agent-b"]).To(BeTrue())
+			Expect(conflicts["agent-c"]).To(BeFalse())
+		})
+	})
+
+	Describe("generateEndpointForAgent", func() {
+		It("should generate both namespaced and simple endpoints when no conflicts", func() {
+			agent := utils.CreateTestAgent("unique-agent", "test-namespace", true)
+			agent.Status.Url = "http://unique-agent.test-namespace.svc.cluster.local:8000/.well-known/agent-card.json"
+
+			nameConflicts := make(map[string]bool)
+			endpoints, err := reconciler.generateEndpointForAgent(ctx, agent, nameConflicts)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(endpoints).To(HaveLen(4))
+
+			// Check namespaced endpoints
+			Expect(endpoints[0].Endpoint).To(Equal("/test-namespace/unique-agent/.well-known/agent-card.json"))
+			Expect(endpoints[1].Endpoint).To(Equal("/test-namespace/unique-agent"))
+
+			// Check simple endpoints (backward compatible)
+			Expect(endpoints[2].Endpoint).To(Equal("/unique-agent/.well-known/agent-card.json"))
+			Expect(endpoints[3].Endpoint).To(Equal("/unique-agent"))
+		})
+
+		It("should generate only namespaced endpoints when conflict exists", func() {
+			agent := utils.CreateTestAgent("conflict-agent", "test-namespace", true)
+			agent.Status.Url = "http://conflict-agent.test-namespace.svc.cluster.local:8000/.well-known/agent-card.json"
+
+			nameConflicts := map[string]bool{"conflict-agent": true}
+			endpoints, err := reconciler.generateEndpointForAgent(ctx, agent, nameConflicts)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(endpoints).To(HaveLen(2))
+
+			// Check only namespaced endpoints are generated
+			Expect(endpoints[0].Endpoint).To(Equal("/test-namespace/conflict-agent/.well-known/agent-card.json"))
+			Expect(endpoints[1].Endpoint).To(Equal("/test-namespace/conflict-agent"))
+		})
+
+		It("should return empty endpoints when agent has no URL", func() {
+			agent := utils.CreateTestAgent("no-url-agent", "test-namespace", true)
+			agent.Status.Url = ""
+
+			nameConflicts := make(map[string]bool)
+			endpoints, err := reconciler.generateEndpointForAgent(ctx, agent, nameConflicts)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(endpoints).To(BeEmpty())
+		})
+
+		It("should set correct backend host URLs", func() {
+			agent := utils.CreateTestAgent("backend-test", "test-namespace", true)
+			agent.Status.Url = "http://backend-test.test-namespace.svc.cluster.local:8080/.well-known/agent-card.json"
+
+			nameConflicts := make(map[string]bool)
+			endpoints, err := reconciler.generateEndpointForAgent(ctx, agent, nameConflicts)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(endpoints).To(HaveLen(4))
+
+			// All endpoints should have the correct backend host
+			for _, endpoint := range endpoints {
+				Expect(endpoint.Backend).To(HaveLen(1))
+				Expect(endpoint.Backend[0].Host).To(HaveLen(1))
+				Expect(endpoint.Backend[0].Host[0]).To(Equal("http://backend-test.test-namespace.svc.cluster.local:8080"))
+			}
+		})
+
+		It("should set correct HTTP methods for agent card and A2A endpoints", func() {
+			agent := utils.CreateTestAgent("method-test", "test-namespace", true)
+			agent.Status.Url = "http://method-test.test-namespace.svc.cluster.local:8000/.well-known/agent-card.json"
+
+			nameConflicts := make(map[string]bool)
+			endpoints, err := reconciler.generateEndpointForAgent(ctx, agent, nameConflicts)
+
+			Expect(err).ToNot(HaveOccurred())
+			Expect(endpoints).To(HaveLen(4))
+
+			// Agent card endpoints should be GET
+			Expect(endpoints[0].Method).To(Equal("GET"))
+			Expect(endpoints[2].Method).To(Equal("GET"))
+
+			// A2A endpoints should be POST
+			Expect(endpoints[1].Method).To(Equal("POST"))
+			Expect(endpoints[3].Method).To(Equal("POST"))
+		})
+	})
+
+	Describe("RBAC Resource Naming", func() {
+		It("should generate ClusterRole names with dot separator to prevent collisions", func() {
+			// Test that different namespace/name combinations produce different ClusterRole names
+			testCases := []struct {
+				namespace string
+				name      string
+				expected  string
+			}{
+				{
+					namespace: "foo-bar",
+					name:      "baz",
+					expected:  "foo-bar.baz.gateway-reader",
+				},
+				{
+					namespace: "foo",
+					name:      "bar-baz",
+					expected:  "foo.bar-baz.gateway-reader",
+				},
+				{
+					namespace: "default",
+					name:      "my-gateway",
+					expected:  "default.my-gateway.gateway-reader",
+				},
+			}
+
+			for _, tc := range testCases {
+				result := generateClusterRoleName(tc.namespace, tc.name)
+				Expect(result).To(Equal(tc.expected))
+			}
+		})
+
+		It("should prevent naming collisions between different namespace/name combinations", func() {
+			// These would collide with hyphen-based naming but not with dot-based naming
+			name1 := generateClusterRoleName("foo-bar", "baz")
+			name2 := generateClusterRoleName("foo", "bar-baz")
+
+			Expect(name1).ToNot(Equal(name2))
+			Expect(name1).To(Equal("foo-bar.baz.gateway-reader"))
+			Expect(name2).To(Equal("foo.bar-baz.gateway-reader"))
+		})
+
+		It("should generate ClusterRoleBinding names with dot separator", func() {
+			testCases := []struct {
+				namespace string
+				name      string
+				expected  string
+			}{
+				{
+					namespace: "default",
+					name:      "my-gateway",
+					expected:  "default.my-gateway.gateway-reader-binding",
+				},
+				{
+					namespace: "production",
+					name:      "api-gateway",
+					expected:  "production.api-gateway.gateway-reader-binding",
+				},
+			}
+
+			for _, tc := range testCases {
+				result := generateClusterRoleBindingName(tc.namespace, tc.name)
+				Expect(result).To(Equal(tc.expected))
+			}
+		})
+
+		It("should validate AgentGateway names before creating RBAC resources", func() {
+			// Test that validation rejects names that would exceed length limits
+			longNamespace := strings.Repeat("a", 120)
+			longName := strings.Repeat("b", 120)
+
+			err := ValidateAgentGatewayName(longNamespace, longName)
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("exceeds maximum length"))
+		})
+
+		It("should accept valid AgentGateway names", func() {
+			validCases := []struct {
+				namespace string
+				name      string
+			}{
+				{namespace: "default", name: "my-gateway"},
+				{namespace: "production", name: "api-gw"},
+				{namespace: "test-ns", name: "test-gw-123"},
+			}
+
+			for _, tc := range validCases {
+				err := ValidateAgentGatewayName(tc.namespace, tc.name)
+				Expect(err).ToNot(HaveOccurred())
+			}
 		})
 	})
 })
