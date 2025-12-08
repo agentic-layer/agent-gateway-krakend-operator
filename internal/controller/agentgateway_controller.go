@@ -27,12 +27,13 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
@@ -43,7 +44,7 @@ import (
 
 const DefaultGatewayPort = 8080
 const AgentGatewayKrakendControllerName = "runtime.agentic-layer.ai/agent-gateway-krakend-controller"
-const Image = "ghcr.io/agentic-layer/agent-gateway-krakend:0.3.0"
+const Image = "ghcr.io/agentic-layer/agent-gateway-krakend:0.4.0"
 
 // Version set at build time using ldflags
 var Version = "dev"
@@ -68,6 +69,18 @@ type KrakendEndpoint struct {
 	Backend []KrakendBackend `json:"backend"`
 }
 
+// AgentConfigInfo holds agent information for the KrakenD config template
+type AgentConfigInfo struct {
+	// ModelID is the unique identifier for the model (format: namespace/name)
+	ModelID string
+	// URL is the agent backend URL
+	URL string
+	// OwnedBy indicates the owner/namespace of the model
+	OwnedBy string
+	// CreatedAt is the Unix timestamp of agent creation
+	CreatedAt int64
+}
+
 // KrakendConfigData holds the data for template execution
 type KrakendConfigData struct {
 	// Port specifies the server port number
@@ -78,6 +91,8 @@ type KrakendConfigData struct {
 	PluginNames []string
 	// Endpoints contains all configured API endpoints
 	Endpoints []KrakendEndpoint
+	// Agents contains all exposed agents for the openai-a2a plugin config
+	Agents []AgentConfigInfo
 	// ServiceVersion is the Docker image path used to identify the service version
 	ServiceVersion string
 	// DeploymentName is the name of the deployment
@@ -91,7 +106,8 @@ type KrakendConfigData struct {
 // AgentGatewayReconciler reconciles a AgentGateway object
 type AgentGatewayReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=runtime.agentic-layer.ai,resources=agents,verbs=get;list;watch
@@ -101,6 +117,7 @@ type AgentGatewayReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -110,7 +127,7 @@ func (r *AgentGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Fetch the AgentGateway instance
 	var agentGateway agentruntimev1alpha1.AgentGateway
 	if err := r.Get(ctx, req.NamespacedName, &agentGateway); err != nil {
-		if errors.IsNotFound(err) {
+		if apierrors.IsNotFound(err) {
 			log.Info("AgentGateway resource not found, ignoring since object must be deleted")
 			return ctrl.Result{}, nil
 		}
@@ -233,7 +250,7 @@ func (r *AgentGatewayReconciler) ensureConfigMap(ctx context.Context, agentGatew
 	existingConfigMap := &corev1.ConfigMap{}
 	err = r.Get(ctx, types.NamespacedName{Name: configMapName, Namespace: agentGateway.Namespace}, existingConfigMap)
 
-	if err != nil && errors.IsNotFound(err) {
+	if err != nil && apierrors.IsNotFound(err) {
 		// ConfigMap doesn't exist, create it
 		if err := r.Create(ctx, desiredConfigMap); err != nil {
 			return "", fmt.Errorf("failed to create new ConfigMap %s: %w", configMapName, err)
@@ -280,7 +297,7 @@ func (r *AgentGatewayReconciler) ensureDeployment(ctx context.Context, agentGate
 	existingDeployment := &appsv1.Deployment{}
 	err = r.Get(ctx, types.NamespacedName{Name: deploymentName, Namespace: agentGateway.Namespace}, existingDeployment)
 
-	if err != nil && errors.IsNotFound(err) {
+	if err != nil && apierrors.IsNotFound(err) {
 		// Deployment doesn't exist, create it
 		if err := r.Create(ctx, desiredDeployment); err != nil {
 			return fmt.Errorf("failed to create new Deployment %s: %w", deploymentName, err)
@@ -345,7 +362,7 @@ func (r *AgentGatewayReconciler) ensureService(ctx context.Context, agentGateway
 	existingService := &corev1.Service{}
 	err = r.Get(ctx, client.ObjectKey{Name: serviceName, Namespace: agentGateway.Namespace}, existingService)
 
-	if err != nil && errors.IsNotFound(err) {
+	if err != nil && apierrors.IsNotFound(err) {
 		// Service doesn't exist, create it
 		if err := r.Create(ctx, desiredService); err != nil {
 			return fmt.Errorf("failed to create new Service %s: %w", serviceName, err)
@@ -426,20 +443,59 @@ func (r *AgentGatewayReconciler) createConfigMapForKrakend(ctx context.Context, 
 
 	// Generate endpoints for all exposed agents
 	var endpoints []KrakendEndpoint
+
+	// Build agent config info for the openai-a2a plugin
+	agents := make([]AgentConfigInfo, 0, len(exposedAgents))
+
+	// Track agent names to detect conflicts for shorthand endpoints
+	agentNameCounts := make(map[string]int)
 	for _, agent := range exposedAgents {
-		agentEndpoints, err := r.generateEndpointForAgent(ctx, agent)
-		if err != nil {
-			log.Error(err, "failed to generate endpoints for agent", "agent.name", agent.Name)
-		} else {
-			endpoints = append(endpoints, agentEndpoints...)
-		}
+		agentNameCounts[agent.Name]++
 	}
+
+	// Generate endpoints for all agents
+	shorthandCount := 0
+	for _, agent := range exposedAgents {
+		// Skip agents without URLs
+		if agent.Status.Url == "" {
+			log.Info("Agent has no URL set in status, skipping endpoint generation", "agent.name", agent.Name, "agent.namespace", agent.Namespace)
+			continue
+		}
+
+		// Parse URL to get backend configuration
+		parsedURL, err := url.Parse(agent.Status.Url)
+		if err != nil {
+			log.Error(err, "failed to parse URL for agent", "agent.name", agent.Name)
+			continue
+		}
+
+		// Always create namespaced endpoints
+		namespacedPath := fmt.Sprintf("%s/%s", agent.Namespace, agent.Name)
+		endpoints = append(endpoints, r.generateAgentEndpoints(namespacedPath, parsedURL)...)
+
+		// Create shorthand endpoints if agent name is unique
+		if agentNameCounts[agent.Name] == 1 {
+			endpoints = append(endpoints, r.generateAgentEndpoints(agent.Name, parsedURL)...)
+			shorthandCount++
+		}
+
+		// Add agent to config for the openai-a2a plugin
+		agents = append(agents, AgentConfigInfo{
+			ModelID:   fmt.Sprintf("%s/%s", agent.Namespace, agent.Name),
+			URL:       agent.Status.Url,
+			OwnedBy:   agent.Namespace,
+			CreatedAt: agent.CreationTimestamp.Unix(),
+		})
+	}
+
+	log.Info("Generated config with agents", "count", len(agents), "shorthand_endpoints", shorthandCount)
 
 	templateData := KrakendConfigData{
 		Port:           DefaultGatewayPort,
 		Timeout:        agentGateway.Spec.Timeout.Duration.String(),
 		PluginNames:    []string{"agentcard-rw", "openai-a2a"}, // Order matters here
 		Endpoints:      endpoints,
+		Agents:         agents,
 		ServiceVersion: Version,
 		DeploymentName: agentGateway.Name,
 		// double templating
@@ -588,58 +644,40 @@ func (r *AgentGatewayReconciler) createDeploymentForKrakend(agentGateway *agentr
 	return deployment, nil
 }
 
-// generateEndpointForAgent creates the endpoint JSON configuration for an agent based on its Status.Url
-func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, agent *agentruntimev1alpha1.Agent) ([]KrakendEndpoint, error) {
-	log := logf.FromContext(ctx)
-
-	// If the agent doesn't have a URL set in status, log and return empty endpoints (not an error)
-	if agent.Status.Url == "" {
-		log.Info("Agent has no URL set in status, skipping endpoint generation", "agent.name", agent.Name, "agent.namespace", agent.Namespace)
-		return []KrakendEndpoint{}, nil
-	}
-
-	// Pre-allocate slice with capacity for RPC + agent card endpoint
-	endpoints := make([]KrakendEndpoint, 0, 2)
-
-	// Parse the URL to separate host from path
-	parsedURL, err := url.Parse(agent.Status.Url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse URL for agent %s: %w", agent.Name, err)
-	}
-
+// generateAgentEndpoints creates Agent Card and A2A endpoint configurations for a given path
+func (r *AgentGatewayReconciler) generateAgentEndpoints(path string, parsedURL *url.URL) []KrakendEndpoint {
 	// Construct the host (scheme + host + port)
 	hostURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
 
-	// Create agent card endpoint
-	endpoints = append(endpoints, KrakendEndpoint{
-		Endpoint:       fmt.Sprintf("/%s%s", agent.Name, parsedURL.Path),
-		OutputEncoding: "no-op",
-		Method:         "GET",
-		Backend: []KrakendBackend{
-			{
-				Host:       []string{hostURL},
-				URLPattern: parsedURL.Path,
-			},
-		},
-	})
-
-	// Remove /.well-known/agent-card.json from the path to get the RPC URL
+	// Remove /.well-known/agent-card.json from the path to get the A2A URL pattern
 	urlPattern := strings.TrimSuffix(parsedURL.Path, "/.well-known/agent-card.json")
 
-	// Create A2A endpoint for the agent (for both service and external URLs)
-	endpoints = append(endpoints, KrakendEndpoint{
-		Endpoint:       fmt.Sprintf("/%s", agent.Name),
-		OutputEncoding: "no-op",
-		Method:         "POST", // A2A protocol uses POST
-		Backend: []KrakendBackend{
-			{
-				Host:       []string{hostURL},
-				URLPattern: urlPattern,
+	return []KrakendEndpoint{
+		// 1. Agent card endpoint
+		{
+			Endpoint:       fmt.Sprintf("/%s%s", path, parsedURL.Path),
+			OutputEncoding: "no-op",
+			Method:         "GET",
+			Backend: []KrakendBackend{
+				{
+					Host:       []string{hostURL},
+					URLPattern: parsedURL.Path,
+				},
 			},
 		},
-	})
-
-	return endpoints, nil
+		// 2. A2A endpoint
+		{
+			Endpoint:       fmt.Sprintf("/%s", path),
+			OutputEncoding: "no-op",
+			Method:         "POST",
+			Backend: []KrakendBackend{
+				{
+					Host:       []string{hostURL},
+					URLPattern: urlPattern,
+				},
+			},
+		},
+	}
 }
 
 // configMapNeedsUpdate compares existing and desired ConfigMaps to determine if an update is needed
