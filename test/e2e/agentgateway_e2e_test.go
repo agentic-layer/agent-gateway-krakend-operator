@@ -86,7 +86,7 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 			var statusCode int
 			var err error
 			body, statusCode, err = utils.MakeServicePost("default", "agent-gateway", 10000,
-				"/mocked-agent-exposed-1", payload)
+				"/default/mocked-agent-exposed-1", payload)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(statusCode).To(Equal(200))
 		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Failed to send POST request to agent gateway")
@@ -105,7 +105,7 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 			var statusCode int
 			var err error
 			body, statusCode, err = utils.MakeServiceGet("default", "agent-gateway", 10000,
-				"/mocked-agent-exposed-1/.well-known/agent-card.json")
+				"/default/mocked-agent-exposed-1/.well-known/agent-card.json")
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(statusCode).To(Equal(200))
 		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Failed to send GET request to agent-card endpoint")
@@ -114,7 +114,7 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		var responseMap map[string]interface{}
 		err := json.Unmarshal(body, &responseMap)
 		Expect(err).NotTo(HaveOccurred(), "Failed to unmarshal agent card response")
-		Expect(responseMap["url"]).To(ContainSubstring("/mocked-agent-exposed-1"),
+		Expect(responseMap["url"]).To(ContainSubstring("/default/mocked-agent-exposed-1"),
 			"Agent card URL should contain the agent path")
 	})
 
@@ -127,7 +127,7 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		Eventually(func(g Gomega) {
 			// Make request to check if gateway returns 404 for deleted agent
 			_, statusCode, err := utils.MakeServiceGet("default", "agent-gateway", 10000,
-				"/mocked-agent-exposed-1/.well-known/agent-card.json")
+				"/default/mocked-agent-exposed-1/.well-known/agent-card.json")
 			g.Expect(err).NotTo(HaveOccurred(), "Failed to send GET request to agent gateway")
 			g.Expect(statusCode).To(Equal(404))
 		}, 3*time.Minute, 2*time.Second).Should(Succeed(), "Gateway should return 404 for deleted agent")
@@ -145,7 +145,7 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 			var err error
 			var statusCode int
 			body, statusCode, err = utils.MakeServiceGet("default", "agent-gateway", 10000,
-				"/mocked-agent-exposed-1/.well-known/agent-card.json")
+				"/default/mocked-agent-exposed-1/.well-known/agent-card.json")
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(statusCode).To(Equal(200))
 		}, 2*time.Minute, 5*time.Second).Should(Succeed(), "Agent card should be accessible")
@@ -153,7 +153,7 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		var responseMap map[string]interface{}
 		err = json.Unmarshal(body, &responseMap)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(responseMap["url"]).To(ContainSubstring("/mocked-agent-exposed-1"),
+		Expect(responseMap["url"]).To(ContainSubstring("/default/mocked-agent-exposed-1"),
 			"Agent card URL should contain the agent path")
 	})
 })

@@ -27,7 +27,6 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -45,7 +44,7 @@ import (
 
 const DefaultGatewayPort = 8080
 const AgentGatewayKrakendControllerName = "runtime.agentic-layer.ai/agent-gateway-krakend-controller"
-const Image = "ghcr.io/agentic-layer/agent-gateway-krakend:0.5.0"
+const Image = "ghcr.io/agentic-layer/agent-gateway-krakend:0.4.0"
 
 // Version set at build time using ldflags
 var Version = "dev"
@@ -70,6 +69,18 @@ type KrakendEndpoint struct {
 	Backend []KrakendBackend `json:"backend"`
 }
 
+// AgentConfigInfo holds agent information for the KrakenD config template
+type AgentConfigInfo struct {
+	// Name is the agent name
+	Name string
+	// Namespace is the agent namespace
+	Namespace string
+	// URL is the agent backend URL
+	URL string
+	// CreatedAt is the Unix timestamp of agent creation
+	CreatedAt int64
+}
+
 // KrakendConfigData holds the data for template execution
 type KrakendConfigData struct {
 	// Port specifies the server port number
@@ -80,6 +91,8 @@ type KrakendConfigData struct {
 	PluginNames []string
 	// Endpoints contains all configured API endpoints
 	Endpoints []KrakendEndpoint
+	// Agents contains all exposed agents for the openai-a2a plugin config
+	Agents []AgentConfigInfo
 	// ServiceVersion is the Docker image path used to identify the service version
 	ServiceVersion string
 	// DeploymentName is the name of the deployment
@@ -105,8 +118,6 @@ type AgentGatewayReconciler struct {
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -130,14 +141,6 @@ func (r *AgentGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		"namespace", agentGateway.Namespace,
 		"agentGatewayClass", agentGateway.Spec.AgentGatewayClassName)
 
-	// Validate AgentGateway naming
-	if err := ValidateAgentGatewayName(agentGateway.Namespace, agentGateway.Name); err != nil {
-		log.Error(err, "Invalid AgentGateway name")
-		r.Recorder.Eventf(&agentGateway, corev1.EventTypeWarning, "ValidationFailed",
-			"Naming validation failed: %v", err)
-		return ctrl.Result{}, fmt.Errorf("validation failed: %w", err)
-	}
-
 	// Check if this controller is process for this AgentGateway
 	process := r.shouldProcessAgentGateway(ctx, &agentGateway)
 
@@ -146,12 +149,10 @@ func (r *AgentGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, nil
 	}
 
-	// Ensure RBAC resources (ServiceAccount, ClusterRole, ClusterRoleBinding)
-	// These are required for the gateway pod to list and watch Agent CRDs cluster-wide
-	// for dynamic service discovery and routing
+	// Ensure ServiceAccount for the gateway pod
 	serviceAccountName := agentGateway.Name + "-gateway"
-	if err := r.ensureRBAC(ctx, &agentGateway, serviceAccountName); err != nil {
-		log.Error(err, "Failed to ensure RBAC for AgentGateway")
+	if err := r.ensureServiceAccount(ctx, &agentGateway, serviceAccountName); err != nil {
+		log.Error(err, "Failed to ensure ServiceAccount for AgentGateway")
 		return ctrl.Result{}, err
 	}
 
@@ -241,29 +242,6 @@ func (r *AgentGatewayReconciler) getExposedAgents(ctx context.Context) ([]*agent
 	}
 
 	return exposedAgents, nil
-}
-
-// detectAgentNameConflicts analyzes exposed agents and returns a map of agent names that exist in multiple namespaces.
-func (r *AgentGatewayReconciler) detectAgentNameConflicts(agents []*agentruntimev1alpha1.Agent) map[string]bool {
-	// Count namespaces per agent name
-	agentNamespaces := make(map[string]map[string]bool)
-
-	for _, agent := range agents {
-		if agentNamespaces[agent.Name] == nil {
-			agentNamespaces[agent.Name] = make(map[string]bool)
-		}
-		agentNamespaces[agent.Name][agent.Namespace] = true
-	}
-
-	// Identify conflicts (agent name in multiple namespaces)
-	conflicts := make(map[string]bool)
-	for agentName, namespaces := range agentNamespaces {
-		if len(namespaces) > 1 {
-			conflicts[agentName] = true
-		}
-	}
-
-	return conflicts
 }
 
 // ensureConfigMap creates or updates the ConfigMap with KrakenD configuration
@@ -471,33 +449,39 @@ func (r *AgentGatewayReconciler) createServiceForAgentGateway(agentGateway *agen
 func (r *AgentGatewayReconciler) createConfigMapForKrakend(ctx context.Context, agentGateway *agentruntimev1alpha1.AgentGateway, configMapName string, exposedAgents []*agentruntimev1alpha1.Agent) (*corev1.ConfigMap, string, error) {
 	log := logf.FromContext(ctx)
 
-	// Detect agent name conflicts
-	nameConflicts := r.detectAgentNameConflicts(exposedAgents)
-	if len(nameConflicts) > 0 {
-		log.Info("Detected agent name conflicts, will use namespace prefixes", "conflicts", len(nameConflicts))
-	}
-
 	// Generate endpoints for all exposed agents
 	var endpoints []KrakendEndpoint
 
 	// Add global OpenAI-compatible endpoints
 	endpoints = append(endpoints, r.generateGlobalOpenAIEndpoints()...)
 
-	// Add per-agent endpoints
+	// Build agent config info for the openai-a2a plugin and generate endpoints
+	agents := make([]AgentConfigInfo, 0, len(exposedAgents))
 	for _, agent := range exposedAgents {
-		agentEndpoints, err := r.generateEndpointForAgent(ctx, agent, nameConflicts)
+		agentEndpoints, err := r.generateEndpointForAgent(ctx, agent)
 		if err != nil {
 			log.Error(err, "failed to generate endpoints for agent", "agent.name", agent.Name)
-		} else {
-			endpoints = append(endpoints, agentEndpoints...)
+			continue
 		}
+		endpoints = append(endpoints, agentEndpoints...)
+
+		// Add agent to config for the openai-a2a plugin
+		agents = append(agents, AgentConfigInfo{
+			Name:      agent.Name,
+			Namespace: agent.Namespace,
+			URL:       agent.Status.Url,
+			CreatedAt: agent.CreationTimestamp.Unix(),
+		})
 	}
+
+	log.Info("Generated config with agents", "count", len(agents))
 
 	templateData := KrakendConfigData{
 		Port:           DefaultGatewayPort,
 		Timeout:        agentGateway.Spec.Timeout.Duration.String(),
 		PluginNames:    []string{"agentcard-rw", "openai-a2a"}, // Order matters here
 		Endpoints:      endpoints,
+		Agents:         agents,
 		ServiceVersion: Version,
 		DeploymentName: agentGateway.Name,
 		// double templating
@@ -679,9 +663,8 @@ func (r *AgentGatewayReconciler) generateGlobalOpenAIEndpoints() []KrakendEndpoi
 }
 
 // generateEndpointForAgent creates the endpoint JSON configuration for an agent based on its Status.Url
-// This function ALWAYS generates namespaced endpoints (/{namespace}/{agent-name})
-// nameConflicts indicates agent names that exist in multiple namespaces
-func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, agent *agentruntimev1alpha1.Agent, nameConflicts map[string]bool) ([]KrakendEndpoint, error) {
+// Generates endpoints using the format /{namespace}/{agent-name}.
+func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, agent *agentruntimev1alpha1.Agent) ([]KrakendEndpoint, error) {
 	log := logf.FromContext(ctx)
 
 	// If the agent doesn't have a URL set in status, log and return empty endpoints (not an error)
@@ -690,10 +673,8 @@ func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, a
 		return []KrakendEndpoint{}, nil
 	}
 
-	// Pre-allocate slice with capacity for up to 4 endpoints:
-	// - 2 namespaced endpoints (agent card + A2A)
-	// - 2 simple name endpoints if no conflicts (agent card + A2A)
-	endpoints := make([]KrakendEndpoint, 0, 4)
+	// Pre-allocate slice with capacity for 2 endpoints (agent card + A2A)
+	endpoints := make([]KrakendEndpoint, 0, 2)
 
 	// Parse the URL to separate host from path
 	parsedURL, err := url.Parse(agent.Status.Url)
@@ -707,12 +688,12 @@ func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, a
 	// Remove /.well-known/agent-card.json from the path to get the RPC URL pattern
 	urlPattern := strings.TrimSuffix(parsedURL.Path, "/.well-known/agent-card.json")
 
-	// ALWAYS generate namespaced endpoints
-	namespacedPrefix := fmt.Sprintf("/%s/%s", agent.Namespace, agent.Name)
+	// Generate endpoints
+	endpointPrefix := fmt.Sprintf("/%s/%s", agent.Namespace, agent.Name)
 
-	// 1. Namespaced agent card endpoint
+	// 1. Agent card endpoint
 	endpoints = append(endpoints, KrakendEndpoint{
-		Endpoint:       fmt.Sprintf("%s%s", namespacedPrefix, parsedURL.Path),
+		Endpoint:       fmt.Sprintf("%s%s", endpointPrefix, parsedURL.Path),
 		OutputEncoding: "no-op",
 		Method:         "GET",
 		Backend: []KrakendBackend{
@@ -723,9 +704,9 @@ func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, a
 		},
 	})
 
-	// 2. Namespaced A2A endpoint
+	// 2. A2A endpoint
 	endpoints = append(endpoints, KrakendEndpoint{
-		Endpoint:       namespacedPrefix,
+		Endpoint:       endpointPrefix,
 		OutputEncoding: "no-op",
 		Method:         "POST",
 		Backend: []KrakendBackend{
@@ -736,45 +717,9 @@ func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, a
 		},
 	})
 
-	// Additionally generate simple name endpoints if no conflict
-	// These provide backward compatibility when names are unique
-	if !nameConflicts[agent.Name] {
-		simplePrefix := fmt.Sprintf("/%s", agent.Name)
-
-		// 3. Simple agent card endpoint (backward compatible)
-		endpoints = append(endpoints, KrakendEndpoint{
-			Endpoint:       fmt.Sprintf("%s%s", simplePrefix, parsedURL.Path),
-			OutputEncoding: "no-op",
-			Method:         "GET",
-			Backend: []KrakendBackend{
-				{
-					Host:       []string{hostURL},
-					URLPattern: parsedURL.Path,
-				},
-			},
-		})
-
-		// 4. Simple A2A endpoint (backward compatible)
-		endpoints = append(endpoints, KrakendEndpoint{
-			Endpoint:       simplePrefix,
-			OutputEncoding: "no-op",
-			Method:         "POST",
-			Backend: []KrakendBackend{
-				{
-					Host:       []string{hostURL},
-					URLPattern: urlPattern,
-				},
-			},
-		})
-
-		log.V(1).Info("Generated both namespaced and simple endpoints (no conflicts)",
-			"agent.name", agent.Name,
-			"agent.namespace", agent.Namespace)
-	} else {
-		log.Info("Generated only namespaced endpoints due to name conflict",
-			"agent.name", agent.Name,
-			"agent.namespace", agent.Namespace)
-	}
+	log.V(1).Info("Generated endpoints for agent",
+		"agent.name", agent.Name,
+		"agent.namespace", agent.Namespace)
 
 	return endpoints, nil
 }
@@ -990,35 +935,8 @@ func (r *AgentGatewayReconciler) findAgentGatewaysForAgent(ctx context.Context, 
 	return requests
 }
 
-// ensureRBAC creates or updates all necessary RBAC resources (ServiceAccount, ClusterRole, ClusterRoleBinding) for the AgentGateway.
-func (r *AgentGatewayReconciler) ensureRBAC(ctx context.Context, agentGateway *agentruntimev1alpha1.AgentGateway, serviceAccountName string) error {
-	log := logf.FromContext(ctx)
-
-	// Create ServiceAccount
-	if err := r.createServiceAccount(ctx, agentGateway, serviceAccountName); err != nil {
-		log.Error(err, "Failed to create ServiceAccount")
-		return err
-	}
-
-	// Create ClusterRole with dot separator to prevent naming collisions
-	clusterRoleName := generateClusterRoleName(agentGateway.Namespace, agentGateway.Name)
-	if err := r.createClusterRole(ctx, agentGateway, clusterRoleName); err != nil {
-		log.Error(err, "Failed to create ClusterRole")
-		return err
-	}
-
-	// Create ClusterRoleBinding
-	clusterRoleBindingName := generateClusterRoleBindingName(agentGateway.Namespace, agentGateway.Name)
-	if err := r.createClusterRoleBinding(ctx, agentGateway, serviceAccountName, clusterRoleName, clusterRoleBindingName); err != nil {
-		log.Error(err, "Failed to create ClusterRoleBinding")
-		return err
-	}
-
-	return nil
-}
-
-// createServiceAccount creates a ServiceAccount for the KrakenD gateway pod.
-func (r *AgentGatewayReconciler) createServiceAccount(ctx context.Context, agentGateway *agentruntimev1alpha1.AgentGateway, serviceAccountName string) error {
+// ensureServiceAccount creates a ServiceAccount for the KrakenD gateway pod.
+func (r *AgentGatewayReconciler) ensureServiceAccount(ctx context.Context, agentGateway *agentruntimev1alpha1.AgentGateway, serviceAccountName string) error {
 	log := logf.FromContext(ctx)
 
 	serviceAccount := &corev1.ServiceAccount{
@@ -1055,123 +973,6 @@ func (r *AgentGatewayReconciler) createServiceAccount(ctx context.Context, agent
 	}
 
 	log.Info("ServiceAccount already exists", "ServiceAccount.Name", serviceAccountName, "ServiceAccount.Namespace", agentGateway.Namespace)
-	return nil
-}
-
-// createClusterRole creates or updates a ClusterRole with permissions to list Agent CRDs cluster-wide.
-func (r *AgentGatewayReconciler) createClusterRole(ctx context.Context, agentGateway *agentruntimev1alpha1.AgentGateway, clusterRoleName string) error {
-	log := logf.FromContext(ctx)
-
-	clusterRole := &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: clusterRoleName,
-			Labels: map[string]string{
-				"app.kubernetes.io/name":       "agent-gateway",
-				"app.kubernetes.io/managed-by": "agent-gateway-krakend-operator",
-				"app.kubernetes.io/instance":   agentGateway.Name,
-			},
-		},
-		Rules: []rbacv1.PolicyRule{
-			{
-				APIGroups: []string{"runtime.agentic-layer.ai"},
-				Resources: []string{"agents"},
-				Verbs:     []string{"get", "list", "watch"},
-			},
-		},
-	}
-
-	// Check if ClusterRole already exists
-	found := &rbacv1.ClusterRole{}
-	err := r.Get(ctx, client.ObjectKey{Name: clusterRoleName}, found)
-	if err != nil && apierrors.IsNotFound(err) {
-		log.Info("Creating ClusterRole", "ClusterRole.Name", clusterRoleName)
-		if err := r.Create(ctx, clusterRole); err != nil {
-			r.Recorder.Eventf(agentGateway, corev1.EventTypeWarning, "RBACSetupFailed",
-				"Failed to create ClusterRole %s: %v", clusterRoleName, err)
-			return err
-		}
-		r.Recorder.Eventf(agentGateway, corev1.EventTypeNormal, "RBACCreated",
-			"Successfully created ClusterRole %s", clusterRoleName)
-		return nil
-	} else if err != nil {
-		r.Recorder.Eventf(agentGateway, corev1.EventTypeWarning, "RBACSetupFailed",
-			"Failed to get ClusterRole %s: %v", clusterRoleName, err)
-		return err
-	}
-
-	// Update the ClusterRole if it exists
-	log.Info("Updating ClusterRole", "ClusterRole.Name", clusterRoleName)
-	found.Rules = clusterRole.Rules
-	found.Labels = clusterRole.Labels
-	if err := r.Update(ctx, found); err != nil {
-		r.Recorder.Eventf(agentGateway, corev1.EventTypeWarning, "RBACSetupFailed",
-			"Failed to update ClusterRole %s: %v", clusterRoleName, err)
-		return err
-	}
-	r.Recorder.Eventf(agentGateway, corev1.EventTypeNormal, "RBACUpdated",
-		"Successfully updated ClusterRole %s", clusterRoleName)
-
-	return nil
-}
-
-// createClusterRoleBinding creates or updates a ClusterRoleBinding to bind the ServiceAccount to the ClusterRole.
-func (r *AgentGatewayReconciler) createClusterRoleBinding(ctx context.Context, agentGateway *agentruntimev1alpha1.AgentGateway, serviceAccountName, clusterRoleName, clusterRoleBindingName string) error {
-	log := logf.FromContext(ctx)
-	clusterRoleBinding := &rbacv1.ClusterRoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: clusterRoleBindingName,
-			Labels: map[string]string{
-				"app.kubernetes.io/name":       "agent-gateway",
-				"app.kubernetes.io/managed-by": "agent-gateway-krakend-operator",
-				"app.kubernetes.io/instance":   agentGateway.Name,
-			},
-		},
-		RoleRef: rbacv1.RoleRef{
-			APIGroup: "rbac.authorization.k8s.io",
-			Kind:     "ClusterRole",
-			Name:     clusterRoleName,
-		},
-		Subjects: []rbacv1.Subject{
-			{
-				Kind:      "ServiceAccount",
-				Name:      serviceAccountName,
-				Namespace: agentGateway.Namespace,
-			},
-		},
-	}
-
-	// Check if ClusterRoleBinding already exists
-	found := &rbacv1.ClusterRoleBinding{}
-	err := r.Get(ctx, client.ObjectKey{Name: clusterRoleBindingName}, found)
-	if err != nil && apierrors.IsNotFound(err) {
-		log.Info("Creating ClusterRoleBinding", "ClusterRoleBinding.Name", clusterRoleBindingName)
-		if err := r.Create(ctx, clusterRoleBinding); err != nil {
-			r.Recorder.Eventf(agentGateway, corev1.EventTypeWarning, "RBACSetupFailed",
-				"Failed to create ClusterRoleBinding %s: %v", clusterRoleBindingName, err)
-			return err
-		}
-		r.Recorder.Eventf(agentGateway, corev1.EventTypeNormal, "RBACCreated",
-			"Successfully created ClusterRoleBinding %s", clusterRoleBindingName)
-		return nil
-	} else if err != nil {
-		r.Recorder.Eventf(agentGateway, corev1.EventTypeWarning, "RBACSetupFailed",
-			"Failed to get ClusterRoleBinding %s: %v", clusterRoleBindingName, err)
-		return err
-	}
-
-	// Update the ClusterRoleBinding if it exists
-	log.Info("Updating ClusterRoleBinding", "ClusterRoleBinding.Name", clusterRoleBindingName)
-	found.RoleRef = clusterRoleBinding.RoleRef
-	found.Subjects = clusterRoleBinding.Subjects
-	found.Labels = clusterRoleBinding.Labels
-	if err := r.Update(ctx, found); err != nil {
-		r.Recorder.Eventf(agentGateway, corev1.EventTypeWarning, "RBACSetupFailed",
-			"Failed to update ClusterRoleBinding %s: %v", clusterRoleBindingName, err)
-		return err
-	}
-	r.Recorder.Eventf(agentGateway, corev1.EventTypeNormal, "RBACUpdated",
-		"Successfully updated ClusterRoleBinding %s", clusterRoleBindingName)
-
 	return nil
 }
 

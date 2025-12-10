@@ -132,19 +132,20 @@ var _ = Describe("OpenAI API E2E Tests", func() {
 			err = json.Unmarshal(body, &modelsResp)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Verify agent appears in list
+			// Verify agent appears in list with namespace/name format
 			found := false
+			expectedModelID := fmt.Sprintf("default/%s", uniqueAgentName)
 			for _, model := range modelsResp.Data {
-				if model.ID == uniqueAgentName {
+				if model.ID == expectedModelID {
 					found = true
 					break
 				}
 			}
-			Expect(found).To(BeTrue(), "Agent should appear in /models list")
+			Expect(found).To(BeTrue(), "Agent should appear in /models list with correct format")
 
 			By("sending request to /chat/completions endpoint")
 			reqBody := OpenAIChatCompletionRequest{
-				Model: uniqueAgentName,
+				Model: expectedModelID,
 				Messages: []struct {
 					Role    string `json:"role"`
 					Content string `json:"content"`
@@ -172,7 +173,7 @@ var _ = Describe("OpenAI API E2E Tests", func() {
 	})
 
 	Describe("Test 2: Namespace Conflict Resolution E2E", func() {
-		It("should correctly route requests using namespaced format when agents have same name", func() {
+		It("should correctly route requests using correct format when agents have same name", func() {
 			By("creating test namespaces")
 			_, err := utils.Run(exec.Command("kubectl", "create", "namespace", testNamespaceA))
 			if err != nil {
@@ -228,7 +229,7 @@ var _ = Describe("OpenAI API E2E Tests", func() {
 			err = json.Unmarshal(body, &modelsResp)
 			Expect(err).NotTo(HaveOccurred())
 
-			// Verify both agents appear with namespaced format
+			// Verify both agents appear with correct format
 			foundA := false
 			foundB := false
 			for _, model := range modelsResp.Data {
@@ -239,10 +240,10 @@ var _ = Describe("OpenAI API E2E Tests", func() {
 					foundB = true
 				}
 			}
-			Expect(foundA).To(BeTrue(), "Agent from namespace A should appear with namespaced ID")
-			Expect(foundB).To(BeTrue(), "Agent from namespace B should appear with namespaced ID")
+			Expect(foundA).To(BeTrue(), "Agent from namespace A should appear with correct ID format")
+			Expect(foundB).To(BeTrue(), "Agent from namespace B should appear with correct ID format")
 
-			By("sending request to namespace A agent using namespaced format")
+			By("sending request to namespace A agent using correct format")
 			reqBodyA := OpenAIChatCompletionRequest{
 				Model: fmt.Sprintf("%s/%s", testNamespaceA, conflictingAgentName),
 				Messages: []struct {
@@ -269,7 +270,7 @@ var _ = Describe("OpenAI API E2E Tests", func() {
 				g.Expect(chatResp.Choices).ToNot(BeEmpty())
 			}, testTimeout, pollingInterval).Should(Succeed())
 
-			By("sending request to namespace B agent using namespaced format")
+			By("sending request to namespace B agent using correct format")
 			reqBodyB := OpenAIChatCompletionRequest{
 				Model: fmt.Sprintf("%s/%s", testNamespaceB, conflictingAgentName),
 				Messages: []struct {

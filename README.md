@@ -116,7 +116,7 @@ The operator will:
 2. Generate KrakenD endpoint configurations for each agent
 3. Create a ConfigMap with the complete KrakenD configuration
 4. Deploy a KrakenD deployment that serves the unified gateway
-5. Automatically create RBAC resources (ServiceAccount, ClusterRole, ClusterRoleBinding) for the gateway to access Agent CRDs
+5. Create a ServiceAccount for the gateway deployment
 
 ### Default AgentGatewayClass
 
