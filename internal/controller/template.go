@@ -34,9 +34,9 @@ const krakendConfigTemplate = `{
 			"openai_a2a_config": {
 				"agents": [{{range $i, $agent := .Agents}}{{if $i}},{{end}}
 					{
-						"name": "{{$agent.Name}}",
-						"namespace": "{{$agent.Namespace}}",
+						"model_id": "{{$agent.ModelID}}",
 						"url": "{{$agent.URL}}",
+						"owned_by": "{{$agent.OwnedBy}}",
 						"createdAt": {{$agent.CreatedAt}}
 					}{{end}}
 				]

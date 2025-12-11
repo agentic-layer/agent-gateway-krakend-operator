@@ -71,12 +71,12 @@ type KrakendEndpoint struct {
 
 // AgentConfigInfo holds agent information for the KrakenD config template
 type AgentConfigInfo struct {
-	// Name is the agent name
-	Name string
-	// Namespace is the agent namespace
-	Namespace string
+	// ModelID is the unique identifier for the model (format: namespace/name)
+	ModelID string
 	// URL is the agent backend URL
 	URL string
+	// OwnedBy indicates the owner/namespace of the model
+	OwnedBy string
 	// CreatedAt is the Unix timestamp of agent creation
 	CreatedAt int64
 }
@@ -467,9 +467,9 @@ func (r *AgentGatewayReconciler) createConfigMapForKrakend(ctx context.Context, 
 
 		// Add agent to config for the openai-a2a plugin
 		agents = append(agents, AgentConfigInfo{
-			Name:      agent.Name,
-			Namespace: agent.Namespace,
+			ModelID:   fmt.Sprintf("%s/%s", agent.Namespace, agent.Name),
 			URL:       agent.Status.Url,
+			OwnedBy:   agent.Namespace,
 			CreatedAt: agent.CreationTimestamp.Unix(),
 		})
 	}
