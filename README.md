@@ -118,6 +118,18 @@ The operator will:
 4. Deploy a KrakenD deployment that serves the unified gateway
 5. Create a ServiceAccount for the gateway deployment
 
+**Endpoint Routing:**
+
+Each exposed agent gets endpoints in two formats:
+- **Namespaced** (always): `/{namespace}/{agent-name}` and `/{namespace}/{agent-name}/.well-known/agent-card.json`
+- **Shorthand** (when unique): `/{agent-name}` and `/{agent-name}/.well-known/agent-card.json`
+
+Shorthand endpoints are only created when the agent name is unique across all namespaces. This prevents conflicts while providing convenience for uniquely-named agents.
+
+The gateway also provides OpenAI-compatible endpoints:
+- `GET /models` - List all exposed agents
+- `POST /chat/completions` - Chat with agents using the `model` parameter for routing
+
 ### Default AgentGatewayClass
 
 The operator installs a `AgentGatewayClass` resource:

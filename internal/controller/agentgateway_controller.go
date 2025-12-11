@@ -474,7 +474,33 @@ func (r *AgentGatewayReconciler) createConfigMapForKrakend(ctx context.Context, 
 		})
 	}
 
-	log.Info("Generated config with agents", "count", len(agents))
+	// Track agent names to detect conflicts for shorthand endpoints
+	agentNameCounts := make(map[string]int)
+	agentNameToAgent := make(map[string]*agentruntimev1alpha1.Agent)
+
+	for _, agent := range exposedAgents {
+		agentNameCounts[agent.Name]++
+		if agentNameCounts[agent.Name] == 1 {
+			agentNameToAgent[agent.Name] = agent
+		}
+	}
+
+	// Add shorthand endpoints for non-conflicting agent names
+	shorthandCount := 0
+	for agentName, count := range agentNameCounts {
+		if count == 1 {
+			agent := agentNameToAgent[agentName]
+			shorthandEndpoints, err := r.generateShorthandEndpoints(ctx, agent)
+			if err != nil {
+				log.Error(err, "failed to generate shorthand endpoints for agent", "agent.name", agent.Name)
+			} else {
+				endpoints = append(endpoints, shorthandEndpoints...)
+				shorthandCount++
+			}
+		}
+	}
+
+	log.Info("Generated config with agents", "count", len(agents), "shorthand_endpoints", shorthandCount)
 
 	templateData := KrakendConfigData{
 		Port:           DefaultGatewayPort,
@@ -718,6 +744,69 @@ func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, a
 	})
 
 	log.V(1).Info("Generated endpoints for agent",
+		"agent.name", agent.Name,
+		"agent.namespace", agent.Namespace)
+
+	return endpoints, nil
+}
+
+// generateShorthandEndpoints creates shorthand endpoint JSON configuration for an agent
+// Generates endpoints using the format /{agent-name} (without namespace prefix).
+// These are only created for agents with unique names across all namespaces.
+func (r *AgentGatewayReconciler) generateShorthandEndpoints(ctx context.Context, agent *agentruntimev1alpha1.Agent) ([]KrakendEndpoint, error) {
+	log := logf.FromContext(ctx)
+
+	// If the agent doesn't have a URL set in status, log and return empty endpoints (not an error)
+	if agent.Status.Url == "" {
+		log.Info("Agent has no URL set in status, skipping shorthand endpoint generation", "agent.name", agent.Name, "agent.namespace", agent.Namespace)
+		return []KrakendEndpoint{}, nil
+	}
+
+	// Pre-allocate slice with capacity for 2 endpoints (agent card + A2A)
+	endpoints := make([]KrakendEndpoint, 0, 2)
+
+	// Parse the URL to separate host from path
+	parsedURL, err := url.Parse(agent.Status.Url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL for agent %s: %w", agent.Name, err)
+	}
+
+	// Construct the host (scheme + host + port)
+	hostURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
+
+	// Remove /.well-known/agent-card.json from the path to get the RPC URL pattern
+	urlPattern := strings.TrimSuffix(parsedURL.Path, "/.well-known/agent-card.json")
+
+	// Generate shorthand endpoints using just the agent name
+	endpointPrefix := fmt.Sprintf("/%s", agent.Name)
+
+	// 1. Agent card shorthand endpoint
+	endpoints = append(endpoints, KrakendEndpoint{
+		Endpoint:       fmt.Sprintf("%s%s", endpointPrefix, parsedURL.Path),
+		OutputEncoding: "no-op",
+		Method:         "GET",
+		Backend: []KrakendBackend{
+			{
+				Host:       []string{hostURL},
+				URLPattern: parsedURL.Path,
+			},
+		},
+	})
+
+	// 2. A2A shorthand endpoint
+	endpoints = append(endpoints, KrakendEndpoint{
+		Endpoint:       endpointPrefix,
+		OutputEncoding: "no-op",
+		Method:         "POST",
+		Backend: []KrakendBackend{
+			{
+				Host:       []string{hostURL},
+				URLPattern: urlPattern,
+			},
+		},
+	})
+
+	log.V(1).Info("Generated shorthand endpoints for agent",
 		"agent.name", agent.Name,
 		"agent.namespace", agent.Namespace)
 

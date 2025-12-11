@@ -755,6 +755,147 @@ var _ = Describe("AgentGateway Controller", func() {
 		})
 	})
 
+	Describe("Shorthand endpoint generation", func() {
+		var (
+			agent             *agentruntimev1alpha1.Agent
+			agentGatewayClass *agentruntimev1alpha1.AgentGatewayClass
+			configMapName     string
+		)
+
+		BeforeEach(func() {
+			// Create single AgentGatewayClass with default annotation and correct controller
+			agentGatewayClass = utils.CreateTestAgentGatewayClassWithDefault("default-class", AgentGatewayKrakendControllerName)
+			Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
+
+			// Create AgentGateway
+			agentGateway := utils.CreateTestAgentGateway(agentGatewayName, agentGatewayNamespace, nil)
+			Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
+
+			configMapName = agentGatewayName + "-krakend-config"
+		})
+
+		Context("when agent name is unique across namespaces", func() {
+			It("should create shorthand endpoints in addition to namespaced endpoints", func() {
+				// Create a single agent with unique name
+				agent = utils.CreateTestAgent("unique-agent", agentGatewayNamespace, true)
+				Expect(k8sClient.Create(ctx, agent)).To(Succeed())
+				utils.SetAgentUrl(ctx, k8sClient, agent, "http://unique-agent:8080/.well-known/agent-card.json")
+
+				// Reconcile
+				utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
+
+				// Get the ConfigMap
+				configMap := &corev1.ConfigMap{}
+				utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
+
+				// Parse the KrakenD config
+				krakendConfig := configMap.Data["krakend.json"]
+				Expect(krakendConfig).NotTo(BeEmpty())
+
+				// Verify we have both namespaced AND shorthand endpoints
+				// Should have: /models, /chat/completions (OpenAI),
+				// /default/unique-agent (namespaced A2A), /default/unique-agent/.well-known/agent-card.json (namespaced card),
+				// /unique-agent (shorthand A2A), /unique-agent/.well-known/agent-card.json (shorthand card)
+				Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/default/unique-agent"`))                             // namespaced A2A
+				Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/default/unique-agent/.well-known/agent-card.json"`)) // namespaced card
+				Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/unique-agent"`))                                     // shorthand A2A
+				Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/unique-agent/.well-known/agent-card.json"`))         // shorthand card
+			})
+		})
+
+		Context("when agent names conflict across namespaces", func() {
+			It("should NOT create shorthand endpoints when names conflict", func() {
+				// Create test namespaces
+				namespaceA := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "namespace-a"}}
+				Expect(k8sClient.Create(ctx, namespaceA)).To(Succeed())
+				namespaceB := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "namespace-b"}}
+				Expect(k8sClient.Create(ctx, namespaceB)).To(Succeed())
+
+				// Create two agents with same name in different namespaces
+				agent1 := utils.CreateTestAgent("common-agent", "namespace-a", true)
+				Expect(k8sClient.Create(ctx, agent1)).To(Succeed())
+				utils.SetAgentUrl(ctx, k8sClient, agent1, "http://agent1:8080/.well-known/agent-card.json")
+
+				agent2 := utils.CreateTestAgent("common-agent", "namespace-b", true)
+				Expect(k8sClient.Create(ctx, agent2)).To(Succeed())
+				utils.SetAgentUrl(ctx, k8sClient, agent2, "http://agent2:8080/.well-known/agent-card.json")
+
+				// Reconcile
+				utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
+
+				// Get the ConfigMap
+				configMap := &corev1.ConfigMap{}
+				utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
+
+				// Parse the KrakenD config
+				krakendConfig := configMap.Data["krakend.json"]
+				Expect(krakendConfig).NotTo(BeEmpty())
+
+				// Verify we have namespaced endpoints
+				Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/namespace-a/common-agent"`))
+				Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/namespace-b/common-agent"`))
+
+				// Verify we do NOT have shorthand endpoints (would cause conflicts)
+				// Count occurrences - should only be 2 (one for each namespace), not more
+				namespacedCount := strings.Count(krakendConfig, `"endpoint": "/namespace-a/common-agent"`) +
+					strings.Count(krakendConfig, `"endpoint": "/namespace-b/common-agent"`)
+				shorthandCount := strings.Count(krakendConfig, `"endpoint": "/common-agent"`)
+
+				Expect(namespacedCount).To(BeNumerically(">=", 2)) // At least 2 namespaced endpoints (A2A + card for each)
+				Expect(shorthandCount).To(Equal(0))                // No shorthand endpoints
+			})
+		})
+
+		Context("when mixing unique and conflicting agent names", func() {
+			It("should create shorthand only for unique agents", func() {
+				// Create test namespaces (ignore errors if they already exist from previous tests)
+				namespaceA := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "namespace-a"}}
+				_ = k8sClient.Create(ctx, namespaceA) // May already exist
+				namespaceB := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "namespace-b"}}
+				_ = k8sClient.Create(ctx, namespaceB) // May already exist
+				namespaceC := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "namespace-c"}}
+				_ = k8sClient.Create(ctx, namespaceC) // May already exist
+
+				// Create unique agent
+				uniqueAgent := utils.CreateTestAgent("unique-agent", "namespace-a", true)
+				Expect(k8sClient.Create(ctx, uniqueAgent)).To(Succeed())
+				utils.SetAgentUrl(ctx, k8sClient, uniqueAgent, "http://unique:8080/.well-known/agent-card.json")
+
+				// Create conflicting agents
+				conflictAgent1 := utils.CreateTestAgent("conflict-agent", "namespace-b", true)
+				Expect(k8sClient.Create(ctx, conflictAgent1)).To(Succeed())
+				utils.SetAgentUrl(ctx, k8sClient, conflictAgent1, "http://conflict1:8080/.well-known/agent-card.json")
+
+				conflictAgent2 := utils.CreateTestAgent("conflict-agent", "namespace-c", true)
+				Expect(k8sClient.Create(ctx, conflictAgent2)).To(Succeed())
+				utils.SetAgentUrl(ctx, k8sClient, conflictAgent2, "http://conflict2:8080/.well-known/agent-card.json")
+
+				// Reconcile
+				utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
+
+				// Get the ConfigMap
+				configMap := &corev1.ConfigMap{}
+				utils.EventuallyResourceExists(ctx, k8sClient, configMapName, agentGatewayNamespace, configMap, timeout, interval)
+
+				// Parse the KrakenD config
+				krakendConfig := configMap.Data["krakend.json"]
+				Expect(krakendConfig).NotTo(BeEmpty())
+
+				// Verify unique agent has both namespaced AND shorthand
+				Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/namespace-a/unique-agent"`)) // namespaced
+				Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/unique-agent"`))             // shorthand
+
+				// Verify conflicting agents have ONLY namespaced, no shorthand
+				Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/namespace-b/conflict-agent"`))
+				Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/namespace-c/conflict-agent"`))
+
+				// Verify no shorthand for conflicting agents
+				shorthandConflictCount := strings.Count(krakendConfig, `"endpoint": "/conflict-agent"`)
+				Expect(shorthandConflictCount).To(Equal(0))
+			})
+		})
+	})
+
 	Describe("Error scenarios", func() {
 		Context("when getExposedAgents fails", func() {
 			It("should handle listing error gracefully", func() {
