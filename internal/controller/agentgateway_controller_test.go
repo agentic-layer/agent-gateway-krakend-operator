@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"time"
 
@@ -654,29 +655,13 @@ var _ = Describe("AgentGateway Controller", func() {
 		})
 	})
 
-	Describe("generateEndpointForAgent", func() {
-		var agent *agentruntimev1alpha1.Agent
-
-		BeforeEach(func() {
-			agent = utils.CreateTestAgent("test-agent", agentGatewayNamespace, true)
-			Expect(k8sClient.Create(ctx, agent)).To(Succeed())
-			utils.SetAgentUrl(ctx, k8sClient, agent, "http://test-agent-service.default.svc.cluster.local:8080/.well-known/agent-card.json")
-		})
-
-		It("should return empty endpoints for agent without URL", func() {
-			agentWithoutUrl := utils.CreateTestAgent("no-url-agent", agentGatewayNamespace, true)
-			Expect(k8sClient.Create(ctx, agentWithoutUrl)).To(Succeed())
-
-			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithoutUrl)
-
+	Describe("generateAgentEndpoints", func() {
+		It("should generate correct endpoint configuration for basic agent card URL", func() {
+			parsedURL, err := url.Parse("http://test-agent-service.default.svc.cluster.local:8080/.well-known/agent-card.json")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(endpoints).To(BeEmpty())
-		})
 
-		It("should generate correct endpoint configuration for agent with URL", func() {
-			endpoints, err := reconciler.generateEndpointForAgent(ctx, agent)
+			endpoints := reconciler.generateAgentEndpoints("default/test-agent", parsedURL)
 
-			Expect(err).NotTo(HaveOccurred())
 			Expect(endpoints).To(HaveLen(2)) // 2 endpoints: agent card + A2A
 
 			// First endpoint should be agent card endpoint
@@ -700,43 +685,37 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(a2aEndpoint.Backend[0].URLPattern).To(Equal(""))
 		})
 
-		It("should use custom URL from agent status and strip agent-card suffix", func() {
-			// Create agent with custom URL that includes a path and agent-card suffix
-			customUrl := "http://custom-backend.example.com:9000/api/v1/.well-known/agent-card.json"
-			agentWithCustomUrl := utils.CreateTestAgent("custom-agent", agentGatewayNamespace, true)
-			Expect(k8sClient.Create(ctx, agentWithCustomUrl)).To(Succeed())
-			utils.SetAgentUrl(ctx, k8sClient, agentWithCustomUrl, customUrl)
-
-			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithCustomUrl)
-
+		It("should use custom URL path and strip agent-card suffix", func() {
+			// URL with custom path and agent-card suffix
+			parsedURL, err := url.Parse("http://custom-backend.example.com:9000/api/v1/.well-known/agent-card.json")
 			Expect(err).NotTo(HaveOccurred())
-			Expect(endpoints).To(HaveLen(2)) // Only namespaced endpoints (agent card + A2A)
 
-			// First endpoint should be namespaced agent card endpoint
-			namespacedAgentCard := endpoints[0]
-			Expect(namespacedAgentCard.Endpoint).To(Equal("/default/custom-agent/api/v1/.well-known/agent-card.json"))
-			Expect(namespacedAgentCard.Method).To(Equal("GET"))
-			Expect(namespacedAgentCard.Backend[0].Host[0]).To(Equal("http://custom-backend.example.com:9000"))
-			Expect(namespacedAgentCard.Backend[0].URLPattern).To(Equal("/api/v1/.well-known/agent-card.json"))
+			endpoints := reconciler.generateAgentEndpoints("default/custom-agent", parsedURL)
 
-			// Second endpoint should be namespaced A2A endpoint
-			namespacedA2A := endpoints[1]
-			Expect(namespacedA2A.Endpoint).To(Equal("/default/custom-agent"))
-			Expect(namespacedA2A.Method).To(Equal("POST"))
-			Expect(namespacedA2A.Backend[0].Host[0]).To(Equal("http://custom-backend.example.com:9000"))
-			Expect(namespacedA2A.Backend[0].URLPattern).To(Equal("/api/v1"))
+			Expect(endpoints).To(HaveLen(2)) // agent card + A2A
+
+			// First endpoint should be agent card endpoint
+			agentCard := endpoints[0]
+			Expect(agentCard.Endpoint).To(Equal("/default/custom-agent/api/v1/.well-known/agent-card.json"))
+			Expect(agentCard.Method).To(Equal("GET"))
+			Expect(agentCard.Backend[0].Host[0]).To(Equal("http://custom-backend.example.com:9000"))
+			Expect(agentCard.Backend[0].URLPattern).To(Equal("/api/v1/.well-known/agent-card.json"))
+
+			// Second endpoint should be A2A endpoint
+			a2aEndpoint := endpoints[1]
+			Expect(a2aEndpoint.Endpoint).To(Equal("/default/custom-agent"))
+			Expect(a2aEndpoint.Method).To(Equal("POST"))
+			Expect(a2aEndpoint.Backend[0].Host[0]).To(Equal("http://custom-backend.example.com:9000"))
+			Expect(a2aEndpoint.Backend[0].URLPattern).To(Equal("/api/v1"))
 		})
 
 		It("should correctly parse URL with only agent-card suffix", func() {
-			// Create agent with URL that has only the agent-card suffix
-			noPathUrl := "http://backend.example.com:8080/.well-known/agent-card.json"
-			agentWithNoPath := utils.CreateTestAgent("no-path-agent", agentGatewayNamespace, true)
-			Expect(k8sClient.Create(ctx, agentWithNoPath)).To(Succeed())
-			utils.SetAgentUrl(ctx, k8sClient, agentWithNoPath, noPathUrl)
-
-			endpoints, err := reconciler.generateEndpointForAgent(ctx, agentWithNoPath)
-
+			// URL with only the agent-card suffix
+			parsedURL, err := url.Parse("http://backend.example.com:8080/.well-known/agent-card.json")
 			Expect(err).NotTo(HaveOccurred())
+
+			endpoints := reconciler.generateAgentEndpoints("default/no-path-agent", parsedURL)
+
 			Expect(endpoints).To(HaveLen(2)) // 2 endpoints: agent card + A2A
 
 			// First endpoint should be agent card endpoint
@@ -1062,10 +1041,6 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(krakendConfig).To(ContainSubstring(`"version": 3`))
 			Expect(krakendConfig).To(ContainSubstring(`"port": 8080`))
 			Expect(krakendConfig).To(ContainSubstring(`"name": "agent-gateway-krakend"`))
-
-			// Verify global endpoints
-			Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/models"`))
-			Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/chat/completions"`))
 
 			// Verify agent endpoints
 			Expect(krakendConfig).To(ContainSubstring(`"endpoint": "/default/test-agent/.well-known/agent-card.json"`))
@@ -1736,14 +1711,14 @@ var _ = Describe("findAgentGatewaysForAgent", func() {
 		})
 	})
 
-	Describe("generateEndpointForAgent", func() {
+	Describe("generateAgentEndpoints with namespace prefix", func() {
 		It("should generate endpoints with namespace prefix", func() {
-			agent := utils.CreateTestAgent("unique-agent", "test-namespace", true)
-			agent.Status.Url = "http://unique-agent.test-namespace.svc.cluster.local:8000/.well-known/agent-card.json"
+			path := "test-namespace/unique-agent"
+			parsedURL, err := url.Parse("http://unique-agent.test-namespace.svc.cluster.local:8000/.well-known/agent-card.json")
+			Expect(err).NotTo(HaveOccurred())
 
-			endpoints, err := reconciler.generateEndpointForAgent(ctx, agent)
+			endpoints := reconciler.generateAgentEndpoints(path, parsedURL)
 
-			Expect(err).ToNot(HaveOccurred())
 			Expect(endpoints).To(HaveLen(2))
 
 			// Check endpoints use namespace prefix
@@ -1751,23 +1726,13 @@ var _ = Describe("findAgentGatewaysForAgent", func() {
 			Expect(endpoints[1].Endpoint).To(Equal("/test-namespace/unique-agent"))
 		})
 
-		It("should return empty endpoints when agent has no URL", func() {
-			agent := utils.CreateTestAgent("no-url-agent", "test-namespace", true)
-			agent.Status.Url = ""
-
-			endpoints, err := reconciler.generateEndpointForAgent(ctx, agent)
-
-			Expect(err).ToNot(HaveOccurred())
-			Expect(endpoints).To(BeEmpty())
-		})
-
 		It("should set correct backend host URLs", func() {
-			agent := utils.CreateTestAgent("backend-test", "test-namespace", true)
-			agent.Status.Url = "http://backend-test.test-namespace.svc.cluster.local:8080/.well-known/agent-card.json"
+			path := "test-namespace/backend-test"
+			parsedURL, err := url.Parse("http://backend-test.test-namespace.svc.cluster.local:8080/.well-known/agent-card.json")
+			Expect(err).NotTo(HaveOccurred())
 
-			endpoints, err := reconciler.generateEndpointForAgent(ctx, agent)
+			endpoints := reconciler.generateAgentEndpoints(path, parsedURL)
 
-			Expect(err).ToNot(HaveOccurred())
 			Expect(endpoints).To(HaveLen(2))
 
 			// All endpoints should have the correct backend host
@@ -1779,12 +1744,12 @@ var _ = Describe("findAgentGatewaysForAgent", func() {
 		})
 
 		It("should set correct HTTP methods for agent card and A2A endpoints", func() {
-			agent := utils.CreateTestAgent("method-test", "test-namespace", true)
-			agent.Status.Url = "http://method-test.test-namespace.svc.cluster.local:8000/.well-known/agent-card.json"
+			path := "test-namespace/method-test"
+			parsedURL, err := url.Parse("http://method-test.test-namespace.svc.cluster.local:8000/.well-known/agent-card.json")
+			Expect(err).NotTo(HaveOccurred())
 
-			endpoints, err := reconciler.generateEndpointForAgent(ctx, agent)
+			endpoints := reconciler.generateAgentEndpoints(path, parsedURL)
 
-			Expect(err).ToNot(HaveOccurred())
 			Expect(endpoints).To(HaveLen(2))
 
 			// Agent card endpoint should be GET

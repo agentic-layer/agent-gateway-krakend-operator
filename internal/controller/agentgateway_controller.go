@@ -117,7 +117,6 @@ type AgentGatewayReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -149,13 +148,6 @@ func (r *AgentGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, nil
 	}
 
-	// Ensure ServiceAccount for the gateway pod
-	serviceAccountName := agentGateway.Name + "-gateway"
-	if err := r.ensureServiceAccount(ctx, &agentGateway, serviceAccountName); err != nil {
-		log.Error(err, "Failed to ensure ServiceAccount for AgentGateway")
-		return ctrl.Result{}, err
-	}
-
 	// Get all exposed agents
 	exposedAgents, err := r.getExposedAgents(ctx)
 	if err != nil {
@@ -173,7 +165,7 @@ func (r *AgentGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request
 
 	// Create Deployment
 	deploymentName := agentGateway.Name
-	if err := r.ensureDeployment(ctx, &agentGateway, deploymentName, configMapName, configHash, serviceAccountName); err != nil {
+	if err := r.ensureDeployment(ctx, &agentGateway, deploymentName, configMapName, configHash); err != nil {
 		log.Error(err, "Failed to ensure Deployment for KrakenD")
 		return ctrl.Result{}, err
 	}
@@ -292,11 +284,11 @@ func (r *AgentGatewayReconciler) ensureConfigMap(ctx context.Context, agentGatew
 }
 
 // ensureDeployment creates or updates the KrakenD deployment
-func (r *AgentGatewayReconciler) ensureDeployment(ctx context.Context, agentGateway *agentruntimev1alpha1.AgentGateway, deploymentName string, configMapName string, configHash string, serviceAccountName string) error {
+func (r *AgentGatewayReconciler) ensureDeployment(ctx context.Context, agentGateway *agentruntimev1alpha1.AgentGateway, deploymentName string, configMapName string, configHash string) error {
 	log := logf.FromContext(ctx)
 
 	// First, generate the desired Deployment configuration
-	desiredDeployment, err := r.createDeploymentForKrakend(agentGateway, deploymentName, configMapName, configHash, serviceAccountName)
+	desiredDeployment, err := r.createDeploymentForKrakend(agentGateway, deploymentName, configMapName, configHash)
 	if err != nil {
 		return fmt.Errorf("failed to generate desired Deployment: %w", err)
 	}
@@ -452,18 +444,40 @@ func (r *AgentGatewayReconciler) createConfigMapForKrakend(ctx context.Context, 
 	// Generate endpoints for all exposed agents
 	var endpoints []KrakendEndpoint
 
-	// Add global OpenAI-compatible endpoints
-	endpoints = append(endpoints, r.generateGlobalOpenAIEndpoints()...)
-
-	// Build agent config info for the openai-a2a plugin and generate endpoints
+	// Build agent config info for the openai-a2a plugin
 	agents := make([]AgentConfigInfo, 0, len(exposedAgents))
+
+	// Track agent names to detect conflicts for shorthand endpoints
+	agentNameCounts := make(map[string]int)
 	for _, agent := range exposedAgents {
-		agentEndpoints, err := r.generateEndpointForAgent(ctx, agent)
-		if err != nil {
-			log.Error(err, "failed to generate endpoints for agent", "agent.name", agent.Name)
+		agentNameCounts[agent.Name]++
+	}
+
+	// Generate endpoints for all agents
+	shorthandCount := 0
+	for _, agent := range exposedAgents {
+		// Skip agents without URLs
+		if agent.Status.Url == "" {
+			log.Info("Agent has no URL set in status, skipping endpoint generation", "agent.name", agent.Name, "agent.namespace", agent.Namespace)
 			continue
 		}
-		endpoints = append(endpoints, agentEndpoints...)
+
+		// Parse URL to get backend configuration
+		parsedURL, err := url.Parse(agent.Status.Url)
+		if err != nil {
+			log.Error(err, "failed to parse URL for agent", "agent.name", agent.Name)
+			continue
+		}
+
+		// Always create namespaced endpoints
+		namespacedPath := fmt.Sprintf("%s/%s", agent.Namespace, agent.Name)
+		endpoints = append(endpoints, r.generateAgentEndpoints(namespacedPath, parsedURL)...)
+
+		// Create shorthand endpoints if agent name is unique
+		if agentNameCounts[agent.Name] == 1 {
+			endpoints = append(endpoints, r.generateAgentEndpoints(agent.Name, parsedURL)...)
+			shorthandCount++
+		}
 
 		// Add agent to config for the openai-a2a plugin
 		agents = append(agents, AgentConfigInfo{
@@ -472,32 +486,6 @@ func (r *AgentGatewayReconciler) createConfigMapForKrakend(ctx context.Context, 
 			OwnedBy:   agent.Namespace,
 			CreatedAt: agent.CreationTimestamp.Unix(),
 		})
-	}
-
-	// Track agent names to detect conflicts for shorthand endpoints
-	agentNameCounts := make(map[string]int)
-	agentNameToAgent := make(map[string]*agentruntimev1alpha1.Agent)
-
-	for _, agent := range exposedAgents {
-		agentNameCounts[agent.Name]++
-		if agentNameCounts[agent.Name] == 1 {
-			agentNameToAgent[agent.Name] = agent
-		}
-	}
-
-	// Add shorthand endpoints for non-conflicting agent names
-	shorthandCount := 0
-	for agentName, count := range agentNameCounts {
-		if count == 1 {
-			agent := agentNameToAgent[agentName]
-			shorthandEndpoints, err := r.generateShorthandEndpoints(ctx, agent)
-			if err != nil {
-				log.Error(err, "failed to generate shorthand endpoints for agent", "agent.name", agent.Name)
-			} else {
-				endpoints = append(endpoints, shorthandEndpoints...)
-				shorthandCount++
-			}
-		}
 	}
 
 	log.Info("Generated config with agents", "count", len(agents), "shorthand_endpoints", shorthandCount)
@@ -556,7 +544,7 @@ func (r *AgentGatewayReconciler) createConfigMapForKrakend(ctx context.Context, 
 }
 
 // createDeploymentForKrakend creates a deployment for KrakenD
-func (r *AgentGatewayReconciler) createDeploymentForKrakend(agentGateway *agentruntimev1alpha1.AgentGateway, deploymentName string, configMapName string, configHash string, serviceAccountName string) (*appsv1.Deployment, error) {
+func (r *AgentGatewayReconciler) createDeploymentForKrakend(agentGateway *agentruntimev1alpha1.AgentGateway, deploymentName string, configMapName string, configHash string) (*appsv1.Deployment, error) {
 	replicas := agentGateway.Spec.Replicas
 	if replicas == nil {
 		replicas = new(int32)
@@ -610,7 +598,6 @@ func (r *AgentGatewayReconciler) createDeploymentForKrakend(agentGateway *agentr
 					},
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: serviceAccountName,
 					Containers: []corev1.Container{
 						{
 							Name:  "agent-gateway",
@@ -657,160 +644,40 @@ func (r *AgentGatewayReconciler) createDeploymentForKrakend(agentGateway *agentr
 	return deployment, nil
 }
 
-// generateGlobalOpenAIEndpoints creates global OpenAI-compatible endpoints
-// These endpoints are handled by the openai-a2a plugin for dynamic routing
-func (r *AgentGatewayReconciler) generateGlobalOpenAIEndpoints() []KrakendEndpoint {
+// generateAgentEndpoints creates Agent Card and A2A endpoint configurations for a given path
+func (r *AgentGatewayReconciler) generateAgentEndpoints(path string, parsedURL *url.URL) []KrakendEndpoint {
+	// Construct the host (scheme + host + port)
+	hostURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
+
+	// Remove /.well-known/agent-card.json from the path to get the A2A URL pattern
+	urlPattern := strings.TrimSuffix(parsedURL.Path, "/.well-known/agent-card.json")
+
 	return []KrakendEndpoint{
+		// 1. Agent card endpoint
 		{
-			Endpoint:       "/models",
+			Endpoint:       fmt.Sprintf("/%s%s", path, parsedURL.Path),
 			OutputEncoding: "no-op",
 			Method:         "GET",
 			Backend: []KrakendBackend{
 				{
-					// Dummy backend URL - never actually called. The openai-a2a plugin intercepts /models requests and handles them directly before reaching this backend
-					Host:       []string{"http://localhost:8080"},
-					URLPattern: "/",
+					Host:       []string{hostURL},
+					URLPattern: parsedURL.Path,
 				},
 			},
 		},
+		// 2. A2A endpoint
 		{
-			Endpoint:       "/chat/completions",
+			Endpoint:       fmt.Sprintf("/%s", path),
 			OutputEncoding: "no-op",
 			Method:         "POST",
 			Backend: []KrakendBackend{
 				{
-					// Dummy backend URL - never actually called. The openai-a2a plugin intercepts /chat/completions requests, resolves the agent from the model parameter, and routes dynamically
-					Host:       []string{"http://localhost:8080"},
-					URLPattern: "/",
+					Host:       []string{hostURL},
+					URLPattern: urlPattern,
 				},
 			},
 		},
 	}
-}
-
-// generateEndpointForAgent creates the endpoint JSON configuration for an agent based on its Status.Url
-// Generates endpoints using the format /{namespace}/{agent-name}.
-func (r *AgentGatewayReconciler) generateEndpointForAgent(ctx context.Context, agent *agentruntimev1alpha1.Agent) ([]KrakendEndpoint, error) {
-	log := logf.FromContext(ctx)
-
-	// If the agent doesn't have a URL set in status, log and return empty endpoints (not an error)
-	if agent.Status.Url == "" {
-		log.Info("Agent has no URL set in status, skipping endpoint generation", "agent.name", agent.Name, "agent.namespace", agent.Namespace)
-		return []KrakendEndpoint{}, nil
-	}
-
-	// Pre-allocate slice with capacity for 2 endpoints (agent card + A2A)
-	endpoints := make([]KrakendEndpoint, 0, 2)
-
-	// Parse the URL to separate host from path
-	parsedURL, err := url.Parse(agent.Status.Url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse URL for agent %s: %w", agent.Name, err)
-	}
-
-	// Construct the host (scheme + host + port)
-	hostURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
-
-	// Remove /.well-known/agent-card.json from the path to get the RPC URL pattern
-	urlPattern := strings.TrimSuffix(parsedURL.Path, "/.well-known/agent-card.json")
-
-	// Generate endpoints
-	endpointPrefix := fmt.Sprintf("/%s/%s", agent.Namespace, agent.Name)
-
-	// 1. Agent card endpoint
-	endpoints = append(endpoints, KrakendEndpoint{
-		Endpoint:       fmt.Sprintf("%s%s", endpointPrefix, parsedURL.Path),
-		OutputEncoding: "no-op",
-		Method:         "GET",
-		Backend: []KrakendBackend{
-			{
-				Host:       []string{hostURL},
-				URLPattern: parsedURL.Path,
-			},
-		},
-	})
-
-	// 2. A2A endpoint
-	endpoints = append(endpoints, KrakendEndpoint{
-		Endpoint:       endpointPrefix,
-		OutputEncoding: "no-op",
-		Method:         "POST",
-		Backend: []KrakendBackend{
-			{
-				Host:       []string{hostURL},
-				URLPattern: urlPattern,
-			},
-		},
-	})
-
-	log.V(1).Info("Generated endpoints for agent",
-		"agent.name", agent.Name,
-		"agent.namespace", agent.Namespace)
-
-	return endpoints, nil
-}
-
-// generateShorthandEndpoints creates shorthand endpoint JSON configuration for an agent
-// Generates endpoints using the format /{agent-name} (without namespace prefix).
-// These are only created for agents with unique names across all namespaces.
-func (r *AgentGatewayReconciler) generateShorthandEndpoints(ctx context.Context, agent *agentruntimev1alpha1.Agent) ([]KrakendEndpoint, error) {
-	log := logf.FromContext(ctx)
-
-	// If the agent doesn't have a URL set in status, log and return empty endpoints (not an error)
-	if agent.Status.Url == "" {
-		log.Info("Agent has no URL set in status, skipping shorthand endpoint generation", "agent.name", agent.Name, "agent.namespace", agent.Namespace)
-		return []KrakendEndpoint{}, nil
-	}
-
-	// Pre-allocate slice with capacity for 2 endpoints (agent card + A2A)
-	endpoints := make([]KrakendEndpoint, 0, 2)
-
-	// Parse the URL to separate host from path
-	parsedURL, err := url.Parse(agent.Status.Url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse URL for agent %s: %w", agent.Name, err)
-	}
-
-	// Construct the host (scheme + host + port)
-	hostURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
-
-	// Remove /.well-known/agent-card.json from the path to get the RPC URL pattern
-	urlPattern := strings.TrimSuffix(parsedURL.Path, "/.well-known/agent-card.json")
-
-	// Generate shorthand endpoints using just the agent name
-	endpointPrefix := fmt.Sprintf("/%s", agent.Name)
-
-	// 1. Agent card shorthand endpoint
-	endpoints = append(endpoints, KrakendEndpoint{
-		Endpoint:       fmt.Sprintf("%s%s", endpointPrefix, parsedURL.Path),
-		OutputEncoding: "no-op",
-		Method:         "GET",
-		Backend: []KrakendBackend{
-			{
-				Host:       []string{hostURL},
-				URLPattern: parsedURL.Path,
-			},
-		},
-	})
-
-	// 2. A2A shorthand endpoint
-	endpoints = append(endpoints, KrakendEndpoint{
-		Endpoint:       endpointPrefix,
-		OutputEncoding: "no-op",
-		Method:         "POST",
-		Backend: []KrakendBackend{
-			{
-				Host:       []string{hostURL},
-				URLPattern: urlPattern,
-			},
-		},
-	})
-
-	log.V(1).Info("Generated shorthand endpoints for agent",
-		"agent.name", agent.Name,
-		"agent.namespace", agent.Namespace)
-
-	return endpoints, nil
 }
 
 // configMapNeedsUpdate compares existing and desired ConfigMaps to determine if an update is needed
@@ -1024,47 +891,6 @@ func (r *AgentGatewayReconciler) findAgentGatewaysForAgent(ctx context.Context, 
 	return requests
 }
 
-// ensureServiceAccount creates a ServiceAccount for the KrakenD gateway pod.
-func (r *AgentGatewayReconciler) ensureServiceAccount(ctx context.Context, agentGateway *agentruntimev1alpha1.AgentGateway, serviceAccountName string) error {
-	log := logf.FromContext(ctx)
-
-	serviceAccount := &corev1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      serviceAccountName,
-			Namespace: agentGateway.Namespace,
-		},
-	}
-
-	// Check if ServiceAccount already exists
-	found := &corev1.ServiceAccount{}
-	err := r.Get(ctx, client.ObjectKey{Name: serviceAccountName, Namespace: agentGateway.Namespace}, found)
-	if err != nil && apierrors.IsNotFound(err) {
-		// Set AgentGateway as owner of the ServiceAccount
-		if err := ctrl.SetControllerReference(agentGateway, serviceAccount, r.Scheme); err != nil {
-			r.Recorder.Eventf(agentGateway, corev1.EventTypeWarning, "RBACSetupFailed",
-				"Failed to set controller reference for ServiceAccount %s: %v", serviceAccountName, err)
-			return err
-		}
-
-		log.Info("Creating ServiceAccount", "ServiceAccount.Name", serviceAccountName, "ServiceAccount.Namespace", agentGateway.Namespace)
-		if err := r.Create(ctx, serviceAccount); err != nil {
-			r.Recorder.Eventf(agentGateway, corev1.EventTypeWarning, "RBACSetupFailed",
-				"Failed to create ServiceAccount %s: %v", serviceAccountName, err)
-			return err
-		}
-		r.Recorder.Eventf(agentGateway, corev1.EventTypeNormal, "RBACCreated",
-			"Successfully created ServiceAccount %s", serviceAccountName)
-		return nil
-	} else if err != nil {
-		r.Recorder.Eventf(agentGateway, corev1.EventTypeWarning, "RBACSetupFailed",
-			"Failed to get ServiceAccount %s: %v", serviceAccountName, err)
-		return err
-	}
-
-	log.Info("ServiceAccount already exists", "ServiceAccount.Name", serviceAccountName, "ServiceAccount.Namespace", agentGateway.Namespace)
-	return nil
-}
-
 // SetupWithManager sets up the controller with the Manager.
 func (r *AgentGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
@@ -1072,7 +898,6 @@ func (r *AgentGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ConfigMap{}).
-		Owns(&corev1.ServiceAccount{}).
 		Watches(
 			&agentruntimev1alpha1.Agent{},
 			handler.EnqueueRequestsFromMapFunc(r.findAgentGatewaysForAgent),
