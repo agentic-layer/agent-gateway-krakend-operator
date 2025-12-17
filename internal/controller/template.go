@@ -30,7 +30,17 @@ const krakendConfigTemplate = `{
 			"@comment_name": "Name order defines handler order. Last entry is outermost/first handler.",
 			"name": [{{range $i, $pluginName := .PluginNames}}{{if $i}},{{end}}
 				"{{$pluginName}}"{{end}}
-			]
+			],
+			"openai_a2a_config": {
+				"agents": [{{range $i, $agent := .Agents}}{{if $i}},{{end}}
+					{
+						"model_id": "{{$agent.ModelID}}",
+						"url": "{{$agent.URL}}",
+						"owned_by": "{{$agent.OwnedBy}}",
+						"createdAt": {{$agent.CreatedAt}}
+					}{{end}}
+				]
+			}
 		},
         "router": {
             "disable_access_log": false,
