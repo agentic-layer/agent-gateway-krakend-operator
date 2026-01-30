@@ -603,12 +603,12 @@ func (r *AgentGatewayReconciler) createDeploymentForKrakend(agentGateway *agentr
 							Name:  "agent-gateway",
 							Image: Image,
 							Ports: []corev1.ContainerPort{containerPort},
-							Env: []corev1.EnvVar{
+							Env: append([]corev1.EnvVar{
 								{
 									Name:  "FC_ENABLE", // Enables krakend flexible configuration via env vars
 									Value: "1",
 								},
-							},
+							}, agentGateway.Spec.Env...),
 							EnvFrom: agentGateway.Spec.EnvFrom,
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
@@ -776,32 +776,60 @@ func (r *AgentGatewayReconciler) deploymentNeedsUpdate(existing, desired *appsv1
 		}
 	}
 
-	// Compare EnvFrom to detect changes in environment variable sources
+	// Compare Env and EnvFrom to detect changes in environment variables
 	if len(existing.Spec.Template.Spec.Containers) > 0 && len(desired.Spec.Template.Spec.Containers) > 0 {
-		existingEnvFrom := existing.Spec.Template.Spec.Containers[0].EnvFrom
-		desiredEnvFrom := desired.Spec.Template.Spec.Containers[0].EnvFrom
-
-		if len(existingEnvFrom) != len(desiredEnvFrom) {
+		if r.envVarsNeedUpdate(existing.Spec.Template.Spec.Containers[0].Env, desired.Spec.Template.Spec.Containers[0].Env) {
 			return true
 		}
+		if r.envFromNeedUpdate(existing.Spec.Template.Spec.Containers[0].EnvFrom, desired.Spec.Template.Spec.Containers[0].EnvFrom) {
+			return true
+		}
+	}
 
-		for i := range desiredEnvFrom {
-			if i >= len(existingEnvFrom) {
+	return false
+}
+
+// envVarsNeedUpdate compares environment variables to detect changes
+func (r *AgentGatewayReconciler) envVarsNeedUpdate(existing, desired []corev1.EnvVar) bool {
+	if len(existing) != len(desired) {
+		return true
+	}
+
+	for i := range desired {
+		if i >= len(existing) {
+			return true
+		}
+		if existing[i].Name != desired[i].Name ||
+			existing[i].Value != desired[i].Value {
+			return true
+		}
+	}
+
+	return false
+}
+
+// envFromNeedUpdate compares environment variable sources to detect changes
+func (r *AgentGatewayReconciler) envFromNeedUpdate(existing, desired []corev1.EnvFromSource) bool {
+	if len(existing) != len(desired) {
+		return true
+	}
+
+	for i := range desired {
+		if i >= len(existing) {
+			return true
+		}
+		// Compare ConfigMapRef
+		if desired[i].ConfigMapRef != nil {
+			if existing[i].ConfigMapRef == nil ||
+				existing[i].ConfigMapRef.Name != desired[i].ConfigMapRef.Name {
 				return true
 			}
-			// Compare ConfigMapRef
-			if desiredEnvFrom[i].ConfigMapRef != nil {
-				if existingEnvFrom[i].ConfigMapRef == nil ||
-					existingEnvFrom[i].ConfigMapRef.Name != desiredEnvFrom[i].ConfigMapRef.Name {
-					return true
-				}
-			}
-			// Compare SecretRef
-			if desiredEnvFrom[i].SecretRef != nil {
-				if existingEnvFrom[i].SecretRef == nil ||
-					existingEnvFrom[i].SecretRef.Name != desiredEnvFrom[i].SecretRef.Name {
-					return true
-				}
+		}
+		// Compare SecretRef
+		if desired[i].SecretRef != nil {
+			if existing[i].SecretRef == nil ||
+				existing[i].SecretRef.Name != desired[i].SecretRef.Name {
+				return true
 			}
 		}
 	}
