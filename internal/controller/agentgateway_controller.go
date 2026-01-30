@@ -603,12 +603,12 @@ func (r *AgentGatewayReconciler) createDeploymentForKrakend(agentGateway *agentr
 							Name:  "agent-gateway",
 							Image: Image,
 							Ports: []corev1.ContainerPort{containerPort},
-							Env: []corev1.EnvVar{
+							Env: append([]corev1.EnvVar{
 								{
 									Name:  "FC_ENABLE", // Enables krakend flexible configuration via env vars
 									Value: "1",
 								},
-							},
+							}, agentGateway.Spec.Env...),
 							EnvFrom: agentGateway.Spec.EnvFrom,
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
@@ -776,8 +776,25 @@ func (r *AgentGatewayReconciler) deploymentNeedsUpdate(existing, desired *appsv1
 		}
 	}
 
-	// Compare EnvFrom to detect changes in environment variable sources
+	// Compare Env and EnvFrom to detect changes in environment variables
 	if len(existing.Spec.Template.Spec.Containers) > 0 && len(desired.Spec.Template.Spec.Containers) > 0 {
+		existingEnv := existing.Spec.Template.Spec.Containers[0].Env
+		desiredEnv := desired.Spec.Template.Spec.Containers[0].Env
+
+		if len(existingEnv) != len(desiredEnv) {
+			return true
+		}
+
+		for i := range desiredEnv {
+			if i >= len(existingEnv) {
+				return true
+			}
+			if existingEnv[i].Name != desiredEnv[i].Name ||
+				existingEnv[i].Value != desiredEnv[i].Value {
+				return true
+			}
+		}
+
 		existingEnvFrom := existing.Spec.Template.Spec.Containers[0].EnvFrom
 		desiredEnvFrom := desired.Spec.Template.Spec.Containers[0].EnvFrom
 
