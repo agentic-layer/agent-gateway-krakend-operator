@@ -778,47 +778,58 @@ func (r *AgentGatewayReconciler) deploymentNeedsUpdate(existing, desired *appsv1
 
 	// Compare Env and EnvFrom to detect changes in environment variables
 	if len(existing.Spec.Template.Spec.Containers) > 0 && len(desired.Spec.Template.Spec.Containers) > 0 {
-		existingEnv := existing.Spec.Template.Spec.Containers[0].Env
-		desiredEnv := desired.Spec.Template.Spec.Containers[0].Env
-
-		if len(existingEnv) != len(desiredEnv) {
+		if r.envVarsNeedUpdate(existing.Spec.Template.Spec.Containers[0].Env, desired.Spec.Template.Spec.Containers[0].Env) {
 			return true
 		}
-
-		for i := range desiredEnv {
-			if i >= len(existingEnv) {
-				return true
-			}
-			if existingEnv[i].Name != desiredEnv[i].Name ||
-				existingEnv[i].Value != desiredEnv[i].Value {
-				return true
-			}
-		}
-
-		existingEnvFrom := existing.Spec.Template.Spec.Containers[0].EnvFrom
-		desiredEnvFrom := desired.Spec.Template.Spec.Containers[0].EnvFrom
-
-		if len(existingEnvFrom) != len(desiredEnvFrom) {
+		if r.envFromNeedUpdate(existing.Spec.Template.Spec.Containers[0].EnvFrom, desired.Spec.Template.Spec.Containers[0].EnvFrom) {
 			return true
 		}
+	}
 
-		for i := range desiredEnvFrom {
-			if i >= len(existingEnvFrom) {
+	return false
+}
+
+// envVarsNeedUpdate compares environment variables to detect changes
+func (r *AgentGatewayReconciler) envVarsNeedUpdate(existing, desired []corev1.EnvVar) bool {
+	if len(existing) != len(desired) {
+		return true
+	}
+
+	for i := range desired {
+		if i >= len(existing) {
+			return true
+		}
+		if existing[i].Name != desired[i].Name ||
+			existing[i].Value != desired[i].Value {
+			return true
+		}
+	}
+
+	return false
+}
+
+// envFromNeedUpdate compares environment variable sources to detect changes
+func (r *AgentGatewayReconciler) envFromNeedUpdate(existing, desired []corev1.EnvFromSource) bool {
+	if len(existing) != len(desired) {
+		return true
+	}
+
+	for i := range desired {
+		if i >= len(existing) {
+			return true
+		}
+		// Compare ConfigMapRef
+		if desired[i].ConfigMapRef != nil {
+			if existing[i].ConfigMapRef == nil ||
+				existing[i].ConfigMapRef.Name != desired[i].ConfigMapRef.Name {
 				return true
 			}
-			// Compare ConfigMapRef
-			if desiredEnvFrom[i].ConfigMapRef != nil {
-				if existingEnvFrom[i].ConfigMapRef == nil ||
-					existingEnvFrom[i].ConfigMapRef.Name != desiredEnvFrom[i].ConfigMapRef.Name {
-					return true
-				}
-			}
-			// Compare SecretRef
-			if desiredEnvFrom[i].SecretRef != nil {
-				if existingEnvFrom[i].SecretRef == nil ||
-					existingEnvFrom[i].SecretRef.Name != desiredEnvFrom[i].SecretRef.Name {
-					return true
-				}
+		}
+		// Compare SecretRef
+		if desired[i].SecretRef != nil {
+			if existing[i].SecretRef == nil ||
+				existing[i].SecretRef.Name != desired[i].SecretRef.Name {
+				return true
 			}
 		}
 	}
