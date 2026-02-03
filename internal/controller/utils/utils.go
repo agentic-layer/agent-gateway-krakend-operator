@@ -219,3 +219,15 @@ func IsSystemConfigMap(name string) bool {
 	}
 	return false
 }
+
+// FindContainerByName finds a container by name in a PodSpec.
+// Returns a pointer to the container if found, nil otherwise.
+// The returned pointer can be used to modify the container in-place.
+func FindContainerByName(pod *corev1.PodSpec, name string) *corev1.Container {
+	for i := range pod.Containers {
+		if pod.Containers[i].Name == name {
+			return &pod.Containers[i]
+		}
+	}
+	return nil
+}

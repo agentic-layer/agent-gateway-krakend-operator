@@ -29,7 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -473,137 +472,6 @@ var _ = Describe("AgentGateway Controller", func() {
 			// Verify Service was updated with correct selector
 			updatedService := utils.FetchService(ctx, k8sClient, serviceName, agentGatewayNamespace)
 			Expect(updatedService.Spec.Selector).To(HaveKeyWithValue("app", agentGateway.Name))
-		})
-	})
-
-	Describe("serviceNeedsUpdate", func() {
-		var (
-			baseService      *corev1.Service
-			identicalService *corev1.Service
-		)
-
-		BeforeEach(func() {
-			baseService = &corev1.Service{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "test-service",
-					Namespace: "default",
-					Labels: map[string]string{
-						"app": "test-app",
-					},
-				},
-				Spec: corev1.ServiceSpec{
-					Type: corev1.ServiceTypeClusterIP,
-					Selector: map[string]string{
-						"app": "test-app",
-					},
-					Ports: []corev1.ServicePort{
-						{
-							Name:       "http",
-							Port:       10000,
-							TargetPort: intstr.FromInt32(8080),
-							Protocol:   corev1.ProtocolTCP,
-						},
-					},
-				},
-			}
-
-			// Create identical service
-			identicalService = baseService.DeepCopy()
-		})
-
-		It("should return false for identical services", func() {
-			needsUpdate := reconciler.serviceNeedsUpdate(baseService, identicalService)
-			Expect(needsUpdate).To(BeFalse())
-		})
-
-		It("should return true when labels differ", func() {
-			differentLabels := baseService.DeepCopy()
-			differentLabels.Labels = map[string]string{"app": "different-app"}
-
-			needsUpdate := reconciler.serviceNeedsUpdate(baseService, differentLabels)
-			Expect(needsUpdate).To(BeTrue())
-		})
-
-		It("should return true when number of labels differ", func() {
-			moreLabels := baseService.DeepCopy()
-			moreLabels.Labels = map[string]string{
-				"app":     "test-app",
-				"version": "1.0",
-			}
-
-			needsUpdate := reconciler.serviceNeedsUpdate(baseService, moreLabels)
-			Expect(needsUpdate).To(BeTrue())
-		})
-
-		It("should return true when service type differs", func() {
-			differentType := baseService.DeepCopy()
-			differentType.Spec.Type = corev1.ServiceTypeNodePort
-
-			needsUpdate := reconciler.serviceNeedsUpdate(baseService, differentType)
-			Expect(needsUpdate).To(BeTrue())
-		})
-
-		It("should return true when selector differs", func() {
-			differentSelector := baseService.DeepCopy()
-			differentSelector.Spec.Selector = map[string]string{"app": "different-selector"}
-
-			needsUpdate := reconciler.serviceNeedsUpdate(baseService, differentSelector)
-			Expect(needsUpdate).To(BeTrue())
-		})
-
-		It("should return true when number of selector entries differ", func() {
-			moreSelectors := baseService.DeepCopy()
-			moreSelectors.Spec.Selector = map[string]string{
-				"app":     "test-app",
-				"version": "1.0",
-			}
-
-			needsUpdate := reconciler.serviceNeedsUpdate(baseService, moreSelectors)
-			Expect(needsUpdate).To(BeTrue())
-		})
-
-		It("should return true when port name differs", func() {
-			differentPortName := baseService.DeepCopy()
-			differentPortName.Spec.Ports[0].Name = "https"
-
-			needsUpdate := reconciler.serviceNeedsUpdate(baseService, differentPortName)
-			Expect(needsUpdate).To(BeTrue())
-		})
-
-		It("should return true when port number differs", func() {
-			differentPortNumber := baseService.DeepCopy()
-			differentPortNumber.Spec.Ports[0].Port = 8443
-
-			needsUpdate := reconciler.serviceNeedsUpdate(baseService, differentPortNumber)
-			Expect(needsUpdate).To(BeTrue())
-		})
-
-		It("should return true when target port differs", func() {
-			differentTargetPort := baseService.DeepCopy()
-			differentTargetPort.Spec.Ports[0].TargetPort = intstr.FromInt32(9090)
-
-			needsUpdate := reconciler.serviceNeedsUpdate(baseService, differentTargetPort)
-			Expect(needsUpdate).To(BeTrue())
-		})
-
-		It("should return true when protocol differs", func() {
-			differentProtocol := baseService.DeepCopy()
-			differentProtocol.Spec.Ports[0].Protocol = corev1.ProtocolUDP
-
-			needsUpdate := reconciler.serviceNeedsUpdate(baseService, differentProtocol)
-			Expect(needsUpdate).To(BeTrue())
-		})
-
-		It("should return true when number of ports differs", func() {
-			morePorts := baseService.DeepCopy()
-			morePorts.Spec.Ports = append(morePorts.Spec.Ports, corev1.ServicePort{
-				Name:     "https",
-				Port:     8443,
-				Protocol: corev1.ProtocolTCP,
-			})
-
-			needsUpdate := reconciler.serviceNeedsUpdate(baseService, morePorts)
-			Expect(needsUpdate).To(BeTrue())
 		})
 	})
 
@@ -1271,7 +1139,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(result).To(Equal(ctrl.Result{}))
 
 			// Assert: Controller should restore ConfigMap to correct state
-			// The controller's configMapNeedsUpdate() detects drift and ensureConfigMap() updates it
+			// The controller's CreateOrUpdate() in ensureConfigMap() automatically handles drift
 			reconciledConfigMap := &corev1.ConfigMap{}
 
 			Eventually(func() bool {
