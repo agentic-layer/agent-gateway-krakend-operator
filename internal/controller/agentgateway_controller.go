@@ -330,7 +330,7 @@ func (r *AgentGatewayReconciler) ensureDeployment(ctx context.Context, agentGate
 		}
 
 		// Set pod template metadata
-		deployment.Spec.Template.ObjectMeta.Labels = labels
+		deployment.Spec.Template.Labels = labels
 		if deployment.Spec.Template.Annotations == nil {
 			deployment.Spec.Template.Annotations = make(map[string]string)
 		}
