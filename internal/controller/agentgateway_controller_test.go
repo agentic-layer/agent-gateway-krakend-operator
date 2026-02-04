@@ -723,6 +723,204 @@ var _ = Describe("findAgentGatewaysForAgent", func() {
 	})
 })
 
+var _ = Describe("ConfigMap and Secret Hash Annotations", func() {
+	var (
+		ctx                   context.Context
+		reconciler            *AgentGatewayReconciler
+		agentGatewayName      = "test-gateway-with-refs"
+		agentGatewayNamespace = "default"
+		configMapName         = "test-configmap"
+		secretName            = "test-secret"
+		timeout               = time.Second * 10
+		interval              = time.Millisecond * 250
+	)
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		reconciler = &AgentGatewayReconciler{
+			Client:   k8sClient,
+			Scheme:   k8sClient.Scheme(),
+			Recorder: record.NewFakeRecorder(100),
+		}
+
+		// Create AgentGatewayClass
+		agentGatewayClass := utils.CreateTestAgentGatewayClassWithDefault("default-class", AgentGatewayKrakendControllerName)
+		Expect(k8sClient.Create(ctx, agentGatewayClass)).To(Succeed())
+
+		// Create test ConfigMap
+		configMap := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      configMapName,
+				Namespace: agentGatewayNamespace,
+			},
+			Data: map[string]string{
+				"key1": "value1",
+				"key2": "value2",
+			},
+		}
+		Expect(k8sClient.Create(ctx, configMap)).To(Succeed())
+
+		// Create test Secret
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secretName,
+				Namespace: agentGatewayNamespace,
+			},
+			Data: map[string][]byte{
+				"password": []byte("secret-value"),
+			},
+		}
+		Expect(k8sClient.Create(ctx, secret)).To(Succeed())
+	})
+
+	AfterEach(func() {
+		utils.CleanupAllResources(ctx, k8sClient)
+	})
+
+	It("should add hash annotations for referenced ConfigMaps and Secrets", func() {
+		// Create AgentGateway with EnvFrom references
+		agentGateway := &agentruntimev1alpha1.AgentGateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      agentGatewayName,
+				Namespace: agentGatewayNamespace,
+			},
+			Spec: agentruntimev1alpha1.AgentGatewaySpec{
+				Replicas: utils.Int32Ptr(1),
+				EnvFrom: []corev1.EnvFromSource{
+					{
+						ConfigMapRef: &corev1.ConfigMapEnvSource{
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: configMapName,
+							},
+						},
+					},
+					{
+						SecretRef: &corev1.SecretEnvSource{
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: secretName,
+							},
+						},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
+
+		// Reconcile
+		utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
+
+		// Fetch deployment and check annotations
+		deployment := &appsv1.Deployment{}
+		utils.EventuallyResourceExists(ctx, k8sClient, agentGatewayName, agentGatewayNamespace, deployment, timeout, interval)
+
+		annotations := deployment.Spec.Template.Annotations
+		Expect(annotations).To(HaveKey("runtime.agentic-layer.ai/ConfigMap-" + configMapName + "-hash"))
+		Expect(annotations).To(HaveKey("runtime.agentic-layer.ai/Secret-" + secretName + "-hash"))
+		Expect(annotations).To(HaveKey("runtime.agentic-layer.ai/config-hash"))
+
+		// Store the initial hashes
+		initialConfigMapHash := annotations["runtime.agentic-layer.ai/ConfigMap-"+configMapName+"-hash"]
+		initialSecretHash := annotations["runtime.agentic-layer.ai/Secret-"+secretName+"-hash"]
+
+		Expect(initialConfigMapHash).NotTo(BeEmpty())
+		Expect(initialSecretHash).NotTo(BeEmpty())
+	})
+
+	It("should update hash annotations when ConfigMap content changes", func() {
+		// Create AgentGateway with ConfigMap reference
+		agentGateway := &agentruntimev1alpha1.AgentGateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      agentGatewayName,
+				Namespace: agentGatewayNamespace,
+			},
+			Spec: agentruntimev1alpha1.AgentGatewaySpec{
+				Replicas: utils.Int32Ptr(1),
+				Env: []corev1.EnvVar{
+					{
+						Name: "TEST_VAR",
+						ValueFrom: &corev1.EnvVarSource{
+							ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+								LocalObjectReference: corev1.LocalObjectReference{
+									Name: configMapName,
+								},
+								Key: "key1",
+							},
+						},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
+
+		// Initial reconcile
+		utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
+
+		// Get initial hash
+		deployment := &appsv1.Deployment{}
+		utils.EventuallyResourceExists(ctx, k8sClient, agentGatewayName, agentGatewayNamespace, deployment, timeout, interval)
+		initialHash := deployment.Spec.Template.Annotations["runtime.agentic-layer.ai/ConfigMap-"+configMapName+"-hash"]
+		Expect(initialHash).NotTo(BeEmpty())
+
+		// Update ConfigMap
+		configMap := &corev1.ConfigMap{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{
+			Name:      configMapName,
+			Namespace: agentGatewayNamespace,
+		}, configMap)).To(Succeed())
+
+		configMap.Data["key1"] = "updated-value"
+		Expect(k8sClient.Update(ctx, configMap)).To(Succeed())
+
+		// Reconcile again
+		utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
+
+		// Get updated deployment
+		updatedDeployment := &appsv1.Deployment{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{
+			Name:      agentGatewayName,
+			Namespace: agentGatewayNamespace,
+		}, updatedDeployment)).To(Succeed())
+
+		newHash := updatedDeployment.Spec.Template.Annotations["runtime.agentic-layer.ai/ConfigMap-"+configMapName+"-hash"]
+		Expect(newHash).NotTo(BeEmpty())
+		Expect(newHash).NotTo(Equal(initialHash), "Hash should change when ConfigMap content changes")
+	})
+
+	It("should handle missing ConfigMaps gracefully", func() {
+		// Create AgentGateway referencing a non-existent ConfigMap
+		agentGateway := &agentruntimev1alpha1.AgentGateway{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      agentGatewayName,
+				Namespace: agentGatewayNamespace,
+			},
+			Spec: agentruntimev1alpha1.AgentGatewaySpec{
+				Replicas: utils.Int32Ptr(1),
+				EnvFrom: []corev1.EnvFromSource{
+					{
+						ConfigMapRef: &corev1.ConfigMapEnvSource{
+							LocalObjectReference: corev1.LocalObjectReference{
+								Name: "non-existent-configmap",
+							},
+						},
+					},
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, agentGateway)).To(Succeed())
+
+		// Reconcile should succeed despite missing ConfigMap
+		utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
+
+		// Verify deployment was created
+		deployment := &appsv1.Deployment{}
+		utils.EventuallyResourceExists(ctx, k8sClient, agentGatewayName, agentGatewayNamespace, deployment, timeout, interval)
+
+		// Should not have annotation for missing ConfigMap
+		annotations := deployment.Spec.Template.Annotations
+		Expect(annotations).NotTo(HaveKey("runtime.agentic-layer.ai/ConfigMap-non-existent-configmap-hash"))
+	})
+})
+
 // Helper functions
 
 func stringPtr(s string) *string {

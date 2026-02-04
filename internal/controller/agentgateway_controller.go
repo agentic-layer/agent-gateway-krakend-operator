@@ -120,6 +120,7 @@ type AgentGatewayReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -335,6 +336,18 @@ func (r *AgentGatewayReconciler) ensureDeployment(ctx context.Context, agentGate
 			deployment.Spec.Template.Annotations = make(map[string]string)
 		}
 		deployment.Spec.Template.Annotations["runtime.agentic-layer.ai/config-hash"] = configHash
+
+		// Generate and add annotations for referenced ConfigMaps and Secrets
+		// Note: We generate annotations based on the spec, not the final container state
+		// This ensures we track all resources that will be referenced
+		containers := []corev1.Container{{
+			Env:     agentGateway.Spec.Env,
+			EnvFrom: agentGateway.Spec.EnvFrom,
+		}}
+		resourceAnnotations := r.generateResourceAnnotations(ctx, containers, agentGateway.Namespace)
+		for k, v := range resourceAnnotations {
+			deployment.Spec.Template.Annotations[k] = v
+		}
 
 		// Configure volume
 		configVolume := corev1.Volume{
@@ -635,6 +648,33 @@ func (r *AgentGatewayReconciler) findAgentGatewaysForAgent(ctx context.Context, 
 	return requests
 }
 
+// findAgentGatewaysForConfigMapOrSecret returns all AgentGateway resources that need to be reconciled
+// when a ConfigMap or Secret changes. We need to reconcile all gateways since we don't know
+// which gateways reference which ConfigMaps/Secrets without reading each gateway's spec.
+func (r *AgentGatewayReconciler) findAgentGatewaysForConfigMapOrSecret(ctx context.Context, obj client.Object) []ctrl.Request {
+	log := logf.FromContext(ctx)
+
+	var agentGatewayList agentruntimev1alpha1.AgentGatewayList
+	if err := r.List(ctx, &agentGatewayList); err != nil {
+		log.Error(err, "Failed to list AgentGateways for ConfigMap/Secret change")
+		return []ctrl.Request{}
+	}
+
+	// Filter to only gateways in the same namespace as the ConfigMap/Secret
+	requests := make([]ctrl.Request, 0)
+	for _, gw := range agentGatewayList.Items {
+		if gw.Namespace == obj.GetNamespace() {
+			requests = append(requests, ctrl.Request{
+				NamespacedName: types.NamespacedName{
+					Name:      gw.Name,
+					Namespace: gw.Namespace,
+				},
+			})
+		}
+	}
+	return requests
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *AgentGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
@@ -645,6 +685,14 @@ func (r *AgentGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&agentruntimev1alpha1.Agent{},
 			handler.EnqueueRequestsFromMapFunc(r.findAgentGatewaysForAgent),
+		).
+		Watches(
+			&corev1.ConfigMap{},
+			handler.EnqueueRequestsFromMapFunc(r.findAgentGatewaysForConfigMapOrSecret),
+		).
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(r.findAgentGatewaysForConfigMapOrSecret),
 		).
 		Named(AgentGatewayKrakendControllerName).
 		Complete(r)
