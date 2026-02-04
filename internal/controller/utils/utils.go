@@ -197,6 +197,13 @@ func CleanupAllResources(ctx context.Context, k8sClient client.Client) {
 		}
 	}
 
+	// Clean up Secrets
+	secretList := &corev1.SecretList{}
+	_ = k8sClient.List(ctx, secretList)
+	for i := range secretList.Items {
+		_ = k8sClient.Delete(ctx, &secretList.Items[i])
+	}
+
 	// Clean up Deployments
 	deploymentList := &appsv1.DeploymentList{}
 	_ = k8sClient.List(ctx, deploymentList)
