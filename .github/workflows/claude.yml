@@ -44,8 +44,6 @@ jobs:
 
           # Optional: Configure Claude's behavior with CLI arguments
           claude_args: |
-          #   --model claude-opus-4-1-20250805
-          #   --max-turns 10
              --allowedTools "Bash(*)"
              --system-prompt "Always run linters and tests before committing code changes."
 
