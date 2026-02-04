@@ -393,6 +393,34 @@ func (r *AgentGatewayReconciler) ensureDeployment(ctx context.Context, agentGate
 				MountPath: "/etc/krakend",
 			},
 		}
+		container.LivenessProbe = &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path:   "/__health",
+					Port:   intstr.FromInt32(DefaultGatewayPort),
+					Scheme: corev1.URISchemeHTTP,
+				},
+			},
+			InitialDelaySeconds: 10,
+			PeriodSeconds:       10,
+			TimeoutSeconds:      5,
+			SuccessThreshold:    1,
+			FailureThreshold:    3,
+		}
+		container.ReadinessProbe = &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{
+				HTTPGet: &corev1.HTTPGetAction{
+					Path:   "/__health",
+					Port:   intstr.FromInt32(DefaultGatewayPort),
+					Scheme: corev1.URISchemeHTTP,
+				},
+			},
+			InitialDelaySeconds: 5,
+			PeriodSeconds:       5,
+			TimeoutSeconds:      3,
+			SuccessThreshold:    1,
+			FailureThreshold:    3,
+		}
 
 		// Set controller reference
 		return ctrl.SetControllerReference(agentGateway, deployment, r.Scheme)
