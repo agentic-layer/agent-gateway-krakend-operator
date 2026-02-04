@@ -527,6 +527,33 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(deployment.Spec.Template.Spec.Volumes[0].ConfigMap.Name).To(Equal(agentGatewayName + "-krakend-config"))
 		})
 
+		It("should create deployment with health probes configured", func() {
+			utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
+
+			deployment := &appsv1.Deployment{}
+			utils.EventuallyResourceExists(ctx, k8sClient, agentGatewayName, agentGatewayNamespace, deployment, timeout, interval)
+
+			container := deployment.Spec.Template.Spec.Containers[0]
+
+			// Verify liveness probe
+			Expect(container.LivenessProbe).NotTo(BeNil())
+			Expect(container.LivenessProbe.HTTPGet).NotTo(BeNil())
+			Expect(container.LivenessProbe.HTTPGet.Path).To(Equal("/__health"))
+			Expect(container.LivenessProbe.HTTPGet.Port.IntVal).To(Equal(int32(DefaultGatewayPort)))
+			Expect(container.LivenessProbe.HTTPGet.Scheme).To(Equal(corev1.URISchemeHTTP))
+			Expect(container.LivenessProbe.InitialDelaySeconds).To(Equal(int32(10)))
+			Expect(container.LivenessProbe.PeriodSeconds).To(Equal(int32(10)))
+
+			// Verify readiness probe
+			Expect(container.ReadinessProbe).NotTo(BeNil())
+			Expect(container.ReadinessProbe.HTTPGet).NotTo(BeNil())
+			Expect(container.ReadinessProbe.HTTPGet.Path).To(Equal("/__health"))
+			Expect(container.ReadinessProbe.HTTPGet.Port.IntVal).To(Equal(int32(DefaultGatewayPort)))
+			Expect(container.ReadinessProbe.HTTPGet.Scheme).To(Equal(corev1.URISchemeHTTP))
+			Expect(container.ReadinessProbe.InitialDelaySeconds).To(Equal(int32(5)))
+			Expect(container.ReadinessProbe.PeriodSeconds).To(Equal(int32(5)))
+		})
+
 		It("should update deployment when replica count changes", func() {
 			utils.ReconcileAndExpectSuccess(ctx, reconciler, agentGatewayName, agentGatewayNamespace)
 
