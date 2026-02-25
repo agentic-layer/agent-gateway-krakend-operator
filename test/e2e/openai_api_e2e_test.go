@@ -66,27 +66,27 @@ var _ = Describe("OpenAI API", Ordered, func() {
 			body, statusCode, err = utils.MakeServiceGet("default", "agent-gateway", 80, "/models")
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(statusCode).To(Equal(200))
-		}, 2*time.Minute, 5*time.Second).Should(Succeed())
 
-		By("verifying agent appears in list")
-		var modelsResp map[string]interface{}
-		err := json.Unmarshal(body, &modelsResp)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(modelsResp["object"]).To(Equal("list"))
-		Expect(modelsResp["data"]).NotTo(BeEmpty())
+			By("verifying agent appears in list")
+			var modelsResp map[string]interface{}
+			err = json.Unmarshal(body, &modelsResp)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(modelsResp["object"]).To(Equal("list"))
+			g.Expect(modelsResp["data"]).NotTo(BeEmpty())
 
-		// Verify our test agent is in the list
-		models := modelsResp["data"].([]interface{})
-		found := false
-		for _, model := range models {
-			modelMap := model.(map[string]interface{})
-			if modelMap["id"] == "default/mocked-agent-exposed-1" {
-				found = true
-				Expect(modelMap["object"]).To(Equal("model"))
-				break
+			// Verify our test agent is in the list
+			models := modelsResp["data"].([]interface{})
+			found := false
+			for _, model := range models {
+				modelMap := model.(map[string]interface{})
+				if modelMap["id"] == "default/mocked-agent-exposed-1" {
+					found = true
+					g.Expect(modelMap["object"]).To(Equal("model"))
+					break
+				}
 			}
-		}
-		Expect(found).To(BeTrue(), "Test agent should appear in /models list")
+			g.Expect(found).To(BeTrue(), "Test agent should appear in /models list")
+		}, 2*time.Minute, 5*time.Second).Should(Succeed())
 	})
 
 	It("should route requests via /chat/completions", func() {
