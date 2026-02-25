@@ -29,7 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	kevents "k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -56,7 +56,7 @@ var _ = Describe("AgentGateway Controller", func() {
 		reconciler = &AgentGatewayReconciler{
 			Client:   k8sClient,
 			Scheme:   k8sClient.Scheme(),
-			Recorder: record.NewFakeRecorder(100),
+			Recorder: kevents.NewFakeRecorder(100),
 		}
 	})
 
@@ -740,7 +740,7 @@ var _ = Describe("ConfigMap and Secret Hash Annotations", func() {
 		reconciler = &AgentGatewayReconciler{
 			Client:   k8sClient,
 			Scheme:   k8sClient.Scheme(),
-			Recorder: record.NewFakeRecorder(100),
+			Recorder: kevents.NewFakeRecorder(100),
 		}
 
 		// Create AgentGatewayClass
