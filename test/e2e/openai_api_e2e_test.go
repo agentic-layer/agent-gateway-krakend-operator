@@ -63,7 +63,7 @@ var _ = Describe("OpenAI API", Ordered, func() {
 		Eventually(func(g Gomega) {
 			var statusCode int
 			var err error
-			body, statusCode, err = utils.MakeServiceGet("default", "agent-gateway", 10000, "/models")
+			body, statusCode, err = utils.MakeServiceGet("default", "agent-gateway", 80, "/models")
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(statusCode).To(Equal(200))
 		}, 2*time.Minute, 5*time.Second).Should(Succeed())
@@ -105,7 +105,7 @@ var _ = Describe("OpenAI API", Ordered, func() {
 		Eventually(func(g Gomega) {
 			var statusCode int
 			var err error
-			body, statusCode, err = utils.MakeServicePost("default", "agent-gateway", 10000,
+			body, statusCode, err = utils.MakeServicePost("default", "agent-gateway", 80,
 				"/chat/completions", reqBody)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(statusCode).To(Equal(200))

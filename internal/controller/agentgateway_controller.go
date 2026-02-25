@@ -487,7 +487,7 @@ func (r *AgentGatewayReconciler) ensureService(ctx context.Context, agentGateway
 		service.Spec.Ports = []corev1.ServicePort{
 			{
 				Name:       "http",
-				Port:       10000,
+				Port:       80,
 				TargetPort: intstr.FromInt32(DefaultGatewayPort),
 				Protocol:   corev1.ProtocolTCP,
 			},

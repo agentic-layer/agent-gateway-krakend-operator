@@ -85,7 +85,7 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		Eventually(func(g Gomega) {
 			var statusCode int
 			var err error
-			body, statusCode, err = utils.MakeServicePost("default", "agent-gateway", 10000,
+			body, statusCode, err = utils.MakeServicePost("default", "agent-gateway", 80,
 				"/default/mocked-agent-exposed-1", payload)
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(statusCode).To(Equal(200))
@@ -104,7 +104,7 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		Eventually(func(g Gomega) {
 			var statusCode int
 			var err error
-			body, statusCode, err = utils.MakeServiceGet("default", "agent-gateway", 10000,
+			body, statusCode, err = utils.MakeServiceGet("default", "agent-gateway", 80,
 				"/default/mocked-agent-exposed-1/.well-known/agent-card.json")
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(statusCode).To(Equal(200))
@@ -126,7 +126,7 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		By("verifying agent-card returns 404")
 		Eventually(func(g Gomega) {
 			// Make request to check if gateway returns 404 for deleted agent
-			_, statusCode, err := utils.MakeServiceGet("default", "agent-gateway", 10000,
+			_, statusCode, err := utils.MakeServiceGet("default", "agent-gateway", 80,
 				"/default/mocked-agent-exposed-1/.well-known/agent-card.json")
 			g.Expect(err).NotTo(HaveOccurred(), "Failed to send GET request to agent gateway")
 			g.Expect(statusCode).To(Equal(404))
@@ -144,7 +144,7 @@ var _ = Describe("Agent Gateway", Ordered, func() {
 		Eventually(func(g Gomega) {
 			var err error
 			var statusCode int
-			body, statusCode, err = utils.MakeServiceGet("default", "agent-gateway", 10000,
+			body, statusCode, err = utils.MakeServiceGet("default", "agent-gateway", 80,
 				"/default/mocked-agent-exposed-1/.well-known/agent-card.json")
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(statusCode).To(Equal(200))

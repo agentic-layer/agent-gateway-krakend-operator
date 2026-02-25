@@ -203,7 +203,7 @@ var _ = Describe("AgentGateway Controller", func() {
 				utils.EventuallyResourceExists(ctx, k8sClient, agentGatewayName, agentGatewayNamespace, service, timeout, interval)
 				Expect(service.Spec.Type).To(Equal(corev1.ServiceTypeClusterIP))
 				Expect(service.Spec.Ports).To(HaveLen(1))
-				Expect(service.Spec.Ports[0].Port).To(Equal(int32(10000)))
+				Expect(service.Spec.Ports[0].Port).To(Equal(int32(80)))
 			})
 
 			It("should respect custom replica count", func() {
@@ -240,7 +240,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(service.Spec.Type).To(Equal(corev1.ServiceTypeClusterIP))
 			Expect(service.Spec.Ports).To(HaveLen(1))
 			Expect(service.Spec.Ports[0].Name).To(Equal("http"))
-			Expect(service.Spec.Ports[0].Port).To(Equal(int32(10000)))
+			Expect(service.Spec.Ports[0].Port).To(Equal(int32(80)))
 			Expect(service.Labels).To(HaveKeyWithValue("app", agentGatewayName))
 			Expect(service.Spec.Selector).To(HaveKeyWithValue("app", agentGatewayName))
 
@@ -267,7 +267,7 @@ var _ = Describe("AgentGateway Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			updatedService := utils.FetchService(ctx, k8sClient, agentGatewayName, agentGatewayNamespace)
-			Expect(updatedService.Spec.Ports[0].Port).To(Equal(int32(10000)))
+			Expect(updatedService.Spec.Ports[0].Port).To(Equal(int32(80)))
 		})
 
 		It("should handle nil AgentGateway gracefully", func() {
