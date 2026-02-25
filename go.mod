@@ -1,14 +1,14 @@
 module github.com/agentic-layer/agent-gateway-krakend-operator
 
-go 1.24.0
+go 1.25.0
 
 require (
 	github.com/agentic-layer/agent-runtime-operator v0.18.2
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.1
-	k8s.io/api v0.34.3
-	k8s.io/apimachinery v0.34.3
-	k8s.io/client-go v0.34.3
+	k8s.io/api v0.35.1
+	k8s.io/apimachinery v0.35.1
+	k8s.io/client-go v0.35.1
 	sigs.k8s.io/controller-runtime v0.22.4
 )
 
