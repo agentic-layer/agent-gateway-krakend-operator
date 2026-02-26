@@ -7,5 +7,18 @@
       "matchPackageNames": ["example.com/agent-gateway-krakend-operator"],
       "enabled": false
     }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^internal/controller/\\.go$/"
+      ],
+      "matchStrings": [
+        "defaultTemplateImageAdk\\s*=\\s*\"(?<depName>ghcr\\.io/agentic-layer/[^:]+):(?<currentValue>[^\"]+)\""
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "semver"
+    }
   ]
 }

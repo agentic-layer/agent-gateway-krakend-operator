@@ -47,7 +47,7 @@ import (
 
 const DefaultGatewayPort = 8080
 const AgentGatewayKrakendControllerName = "runtime.agentic-layer.ai/agent-gateway-krakend-controller"
-const Image = "ghcr.io/agentic-layer/agent-gateway-krakend:0.5.0"
+const Image = "ghcr.io/agentic-layer/agent-gateway-krakend:0.6.0"
 
 // Version set at build time using ldflags
 var Version = "dev"
