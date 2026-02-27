@@ -31,6 +31,11 @@ const krakendConfigTemplate = `{
 			"name": [{{range $i, $pluginName := .PluginNames}}{{if $i}},{{end}}
 				"{{$pluginName}}"{{end}}
 			],
+			"body_logger_config": {
+				"skip_paths": [
+				  	"/__health"
+				]
+			},
 			"openai_a2a_config": {
 				"agents": [{{range $i, $agent := .Agents}}{{if $i}},{{end}}
 					{
