@@ -41,7 +41,12 @@ func PostRequestWithStatus(url string, payload any) ([]byte, int, error) {
 
 // requestWithStatus executes an HTTP request and returns the response body, status code, and error.
 func requestWithStatus(req *http.Request) ([]byte, int, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			DisableCompression: true,
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("HTTP request failed: %w", err)
