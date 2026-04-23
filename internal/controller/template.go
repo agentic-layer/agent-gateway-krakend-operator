@@ -108,6 +108,7 @@ const krakendConfigTemplate = `{
             "endpoint": "{{$endpoint.Endpoint}}",
             "output_encoding": "{{$endpoint.OutputEncoding}}",
             "method": "{{$endpoint.Method}}",
+			"input_headers": ["*"],
             "backend": [{{range $j, $backend := $endpoint.Backend}}{{if $j}},{{end}}
                 {
                     "host": [{{range $k, $host := $backend.Host}}{{if $k}},{{end}}"{{$host}}"{{end}}],
