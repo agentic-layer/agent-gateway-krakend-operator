@@ -219,6 +219,8 @@ func (r *AgentGatewayReconciler) shouldProcessAgentGateway(ctx context.Context, 
 				return true
 			}
 		}
+		// Explicit className did not match any managed class; do not fall back to the default class.
+		return false
 	}
 
 	// Look for AgentGatewayClass with default annotation among filtered classes

@@ -3,6 +3,7 @@
 resources:
 - bases/agent-gateway-krakend-operator.clusterserviceversion.yaml
 - ../default
+- ../install
 - ../samples
 - ../scorecard
 
