@@ -48,6 +48,7 @@ import (
 const DefaultGatewayPort = 8080
 const AgentGatewayKrakendControllerName = "runtime.agentic-layer.ai/agent-gateway-krakend-controller"
 const Image = "ghcr.io/agentic-layer/agent-gateway-krakend:0.6.3"
+const AppLabel = "app"
 
 // Version set at build time using ldflags
 var Version = "dev"
@@ -280,7 +281,7 @@ func (r *AgentGatewayReconciler) ensureConfigMap(ctx context.Context, agentGatew
 		if configMap.Labels == nil {
 			configMap.Labels = make(map[string]string)
 		}
-		configMap.Labels["app"] = agentGateway.Name
+		configMap.Labels[AppLabel] = agentGateway.Name
 
 		// Set controller reference
 		return ctrl.SetControllerReference(agentGateway, configMap, r.Scheme)
@@ -318,7 +319,7 @@ func (r *AgentGatewayReconciler) ensureDeployment(ctx context.Context, agentGate
 		deployment.Spec.Replicas = replicas
 
 		// Set labels
-		labels := map[string]string{"app": agentGateway.Name}
+		labels := map[string]string{AppLabel: agentGateway.Name}
 		if deployment.Labels == nil {
 			deployment.Labels = make(map[string]string)
 		}
@@ -469,11 +470,11 @@ func (r *AgentGatewayReconciler) ensureService(ctx context.Context, agentGateway
 
 	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, service, func() error {
 		labels := map[string]string{
-			"app": agentGateway.Name,
+			AppLabel: agentGateway.Name,
 		}
 
 		selectorLabels := map[string]string{
-			"app": agentGateway.Name,
+			AppLabel: agentGateway.Name,
 		}
 
 		// Set labels

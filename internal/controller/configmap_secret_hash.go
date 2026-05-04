@@ -27,6 +27,11 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+const (
+	KindConfigMap = "ConfigMap"
+	KindSecret    = "Secret"
+)
+
 // ReferencedResource represents a ConfigMap or Secret referenced in the deployment
 type ReferencedResource struct {
 	Name      string
@@ -44,19 +49,19 @@ func collectReferencedResources(containers []corev1.Container, namespace string)
 		for _, env := range container.Env {
 			if env.ValueFrom != nil {
 				if env.ValueFrom.ConfigMapKeyRef != nil {
-					key := fmt.Sprintf("ConfigMap/%s/%s", namespace, env.ValueFrom.ConfigMapKeyRef.Name)
+					key := fmt.Sprintf("%s/%s/%s", KindConfigMap, namespace, env.ValueFrom.ConfigMapKeyRef.Name)
 					resourceMap[key] = ReferencedResource{
 						Name:      env.ValueFrom.ConfigMapKeyRef.Name,
 						Namespace: namespace,
-						Kind:      "ConfigMap",
+						Kind:      KindConfigMap,
 					}
 				}
 				if env.ValueFrom.SecretKeyRef != nil {
-					key := fmt.Sprintf("Secret/%s/%s", namespace, env.ValueFrom.SecretKeyRef.Name)
+					key := fmt.Sprintf("%s/%s/%s", KindSecret, namespace, env.ValueFrom.SecretKeyRef.Name)
 					resourceMap[key] = ReferencedResource{
 						Name:      env.ValueFrom.SecretKeyRef.Name,
 						Namespace: namespace,
-						Kind:      "Secret",
+						Kind:      KindSecret,
 					}
 				}
 			}
@@ -65,19 +70,19 @@ func collectReferencedResources(containers []corev1.Container, namespace string)
 		// Check EnvFrom for ConfigMapRef and SecretRef
 		for _, envFrom := range container.EnvFrom {
 			if envFrom.ConfigMapRef != nil {
-				key := fmt.Sprintf("ConfigMap/%s/%s", namespace, envFrom.ConfigMapRef.Name)
+				key := fmt.Sprintf("%s/%s/%s", KindConfigMap, namespace, envFrom.ConfigMapRef.Name)
 				resourceMap[key] = ReferencedResource{
 					Name:      envFrom.ConfigMapRef.Name,
 					Namespace: namespace,
-					Kind:      "ConfigMap",
+					Kind:      KindConfigMap,
 				}
 			}
 			if envFrom.SecretRef != nil {
-				key := fmt.Sprintf("Secret/%s/%s", namespace, envFrom.SecretRef.Name)
+				key := fmt.Sprintf("%s/%s/%s", KindSecret, namespace, envFrom.SecretRef.Name)
 				resourceMap[key] = ReferencedResource{
 					Name:      envFrom.SecretRef.Name,
 					Namespace: namespace,
-					Kind:      "Secret",
+					Kind:      KindSecret,
 				}
 			}
 		}
@@ -108,7 +113,7 @@ func (r *AgentGatewayReconciler) generateResourceHash(ctx context.Context, resou
 	log := logf.FromContext(ctx)
 
 	switch resource.Kind {
-	case "ConfigMap":
+	case KindConfigMap:
 		var cm corev1.ConfigMap
 		if err := r.Get(ctx, types.NamespacedName{
 			Name:      resource.Name,
@@ -149,7 +154,7 @@ func (r *AgentGatewayReconciler) generateResourceHash(ctx context.Context, resou
 
 		return fmt.Sprintf("%x", h.Sum(nil))[:16], nil
 
-	case "Secret":
+	case KindSecret:
 		var secret corev1.Secret
 		if err := r.Get(ctx, types.NamespacedName{
 			Name:      resource.Name,
