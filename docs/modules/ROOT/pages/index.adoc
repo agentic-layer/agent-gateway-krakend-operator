@@ -4,10 +4,3 @@ This is a KrakenD based implementation of the Agentic Layer Agent Gateway.
 
 The Agent Gateway KrakenD Operator is a specialized Kubernetes operator that provides a KrakenD-based Agent gateway implementation for the Agent Runtime Operator ecosystem.
 It manages `AgentGateway` resources and automatically generates KrakenD configurations to expose Agent workloads through a unified gateway interface.
-
-== How-To Guides
-
-Step-by-step guides to get you up and running:
-
-* xref:operator:how-to-guide.adoc[]
-* xref:agent-runtime-operator:agent-gateways:how-to-guide.adoc[]

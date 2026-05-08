@@ -1,0 +1,93 @@
+// HOW-TO GUIDE — Diátaxis
+// This page answers a goal-shaped question: "how do I do X?"
+// DO: assume context; give concrete steps; link to reference for fields.
+// DON'T: teach concepts; duplicate reference content; include long explanations.
+// If a section drifts into "what is this and why" → move to explanation.adoc.
+// If a section drifts into "exhaustive list of fields/values" → move to reference.adoc.
+// If a section turns into a from-zero walkthrough → move to a tutorial in a showcase repo.
+
+= Create a KrakenD AgentGateway
+
+This guide shows you how to deploy an `AgentGateway` instance that is reconciled by the KrakenD operator.
+
+== Prerequisites
+
+* xref:agent-gateway-krakend-operator::how-to-guides/install.adoc[Agent Gateway KrakenD Operator] installed.
+* At least one `Agent` resource with `spec.exposed: true` deployed in the cluster (the gateway will expose no endpoints until an agent is available).
+
+== Create the AgentGateway
+
+Apply an `AgentGateway` resource with `spec.agentGatewayClassName: krakend` to claim the KrakenD implementation:
+
+[source,yaml]
+----
+apiVersion: runtime.agentic-layer.ai/v1alpha1
+kind: AgentGateway
+metadata:
+  name: agent-gateway
+  namespace: agent-gateway
+spec:
+  agentGatewayClassName: krakend
+  replicas: 1
+  timeout: 60000ms
+----
+
+[source,bash]
+----
+kubectl apply -f agent-gateway.yaml
+----
+
+The operator creates a KrakenD `Deployment`, a `Service`, and a `ConfigMap` named `agent-gateway-krakend-config` containing the generated KrakenD JSON configuration.
+
+== Configure environment variables
+
+Pass additional configuration to the KrakenD container via `spec.env` or `spec.envFrom`. For example, to enable OpenTelemetry tracing:
+
+[source,yaml]
+----
+spec:
+  agentGatewayClassName: krakend
+  env:
+    - name: OTEL_EXPORTER_OTLP_ENDPOINT
+      value: http://otel-collector.monitoring:4318
+----
+
+Or load configuration from a `ConfigMap`:
+
+[source,yaml]
+----
+spec:
+  agentGatewayClassName: krakend
+  envFrom:
+    - configMapRef:
+        name: otel-config
+----
+
+For the full list of `AgentGateway` fields, see xref:agent-runtime-operator:agent-gateways:reference.adoc[].
+For KrakenD-specific configuration items, see xref:agent-gateway-krakend-operator::reference.adoc[].
+
+== Verify
+
+[source,bash]
+----
+# Check that the Deployment is running
+kubectl get deployment agent-gateway -n agent-gateway
+
+# Check that the generated KrakenD ConfigMap was created
+kubectl get configmap agent-gateway-krakend-config -n agent-gateway
+
+# Check the Service
+kubectl get service agent-gateway -n agent-gateway
+
+# Check the KrakenD pod logs
+kubectl logs -l app=agent-gateway -n agent-gateway
+----
+
+The gateway is ready when the Deployment shows all replicas available.
+Once exposed agents are discovered, their endpoints appear in the `agent-gateway-krakend-config` ConfigMap.
+
+== Related
+
+* xref:agent-gateway-krakend-operator::reference.adoc[]
+* xref:agent-gateway-krakend-operator::explanation.adoc[]
+* xref:agent-runtime-operator:agent-gateways:how-to-guide.adoc[]

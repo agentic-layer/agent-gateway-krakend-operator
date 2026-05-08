@@ -1,0 +1,141 @@
+// REFERENCE — Diátaxis
+// This page is information-shaped: tables, field lists, full API surface.
+// DO: be exhaustive within scope; use stable, ctrl-F-able structure;
+//     one heading per resource/CRD/command/field group.
+// DON'T: include tutorials, decision trees, or "why" explanations.
+// If a section drifts into "how would you do X" → move to how-to-guide.adoc.
+// If a section drifts into "why this exists" → move to explanation.adoc.
+
+= Agent Gateway KrakenD Operator Reference
+
+This reference covers KrakenD-specific implementation details of the Agent Gateway KrakenD Operator. For the `AgentGateway` and `AgentGatewayClass` CRD field tables, see xref:agent-runtime-operator:agent-gateways:reference.adoc[].
+
+== AgentGatewayClass controller name
+
+The operator registers one `AgentGatewayClass` with the following controller name:
+
+[cols="1,3"]
+|===
+| Item | Value
+
+| `AgentGatewayClass` name
+| `krakend`
+
+| `spec.controller`
+| `runtime.agentic-layer.ai/agent-gateway-krakend-controller`
+|===
+
+An `AgentGateway` resource with `spec.agentGatewayClassName: krakend` is claimed and reconciled by this operator. When `spec.agentGatewayClassName` is omitted and the `krakend` class carries the `agentgatewayclass.kubernetes.io/is-default-class: "true"` annotation, the operator also claims unclaimed gateways.
+
+== Generated ConfigMap
+
+For each reconciled `AgentGateway`, the operator creates a `ConfigMap` in the same namespace. The name pattern is:
+
+----
+<agentgateway-name>-krakend-config
+----
+
+For example, an `AgentGateway` named `agent-gateway` produces a ConfigMap named `agent-gateway-krakend-config`. The ConfigMap contains one key:
+
+[cols="1,3"]
+|===
+| Key | Description
+
+| `krakend.json`
+| Complete KrakenD v2 JSON configuration generated from discovered exposed agents and the gateway's timeout setting. The file is mounted at `/etc/krakend` inside the KrakenD container.
+|===
+
+== KrakenD container defaults
+
+The operator manages the KrakenD container in the generated `Deployment`.
+
+[cols="1,3"]
+|===
+| Item | Value
+
+| Container image
+| `ghcr.io/agentic-layer/agent-gateway-krakend:0.6.3`
+
+| Container port
+| `8080` (TCP)
+
+| Service port
+| `80` (ClusterIP, forwarded to `8080`)
+
+| Memory request / limit
+| `32Mi` / `64Mi`
+
+| CPU request / limit
+| `100m` / `500m`
+
+| Liveness probe path
+| `GET /__health`
+
+| Readiness probe path
+| `GET /__health`
+
+| Config volume mount
+| `/etc/krakend`
+
+| `FC_ENABLE` env var
+| `1` (always injected; enables KrakenD flexible configuration)
+|===
+
+== spec.env and spec.envFrom
+
+Environment variables set in `AgentGateway.spec.env` and `AgentGateway.spec.envFrom` are forwarded to the KrakenD container. The operator appends them after its own managed variables, so they can override operator defaults.
+
+[cols="1,3"]
+|===
+| Variable | Effect
+
+| `OTEL_EXPORTER_OTLP_ENDPOINT`
+| When set, activates the KrakenD OpenTelemetry exporter. The operator parses the value as `scheme://host:port` and injects host and port separately into the KrakenD config template. Example: `http://otel-collector.monitoring:4318`.
+|===
+
+All other variables in `spec.env` are passed through to the container without modification.
+
+== Pod restart annotation
+
+The operator annotates the pod template with a hash of the generated KrakenD configuration:
+
+----
+runtime.agentic-layer.ai/config-hash: <16-character hex>
+----
+
+When an exposed agent is added, removed, or its URL changes, the hash changes and Kubernetes rolls the `Deployment` automatically.
+
+== Endpoint routing
+
+The operator discovers all `Agent` resources cluster-wide with `spec.exposed: true` and generates two endpoint pairs per agent:
+
+[cols="1,3"]
+|===
+| Endpoint pattern | Condition
+
+| `+/{namespace}/{agent-name}+` (POST) and `+/{namespace}/{agent-name}/.well-known/agent-card.json+` (GET)
+| Always created.
+
+| `+/{agent-name}+` (POST) and `+/{agent-name}/.well-known/agent-card.json+` (GET)
+| Created only when the agent name is unique across all namespaces (shorthand endpoint).
+|===
+
+In addition, the following OpenAI-compatible endpoints are always present:
+
+[cols="1,3"]
+|===
+| Endpoint | Description
+
+| `GET /models`
+| Returns all exposed agents in OpenAI model-list format.
+
+| `POST /chat/completions`
+| Routes requests to an agent selected by the `model` field in the request body.
+|===
+
+== Related
+
+* xref:agent-gateway-krakend-operator::how-to-guides/install.adoc[]
+* xref:agent-gateway-krakend-operator::how-to-guides/create-gateway.adoc[]
+* xref:agent-gateway-krakend-operator::explanation.adoc[]
+* xref:agent-runtime-operator:agent-gateways:reference.adoc[]

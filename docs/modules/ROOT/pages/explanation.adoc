@@ -1,0 +1,48 @@
+// EXPLANATION — Diátaxis
+// This page is understanding-shaped: "what is this, why, how does it fit?"
+// DO: discuss design choices, alternatives, trade-offs; cross-link to how-to and reference.
+// DON'T: give step-by-step instructions; provide exhaustive field listings.
+// If a section drifts into "how do I do X" → move to how-to-guide.adoc.
+// If a section drifts into "list of all fields" → move to reference.adoc.
+
+= KrakenD as the Agent Gateway Implementation
+
+== What it is
+
+The Agent Gateway KrakenD Operator is a Kubernetes operator that implements the `AgentGateway` contract using https://www.krakend.io/[KrakenD], an open-source API gateway with declarative JSON pipeline configuration. It watches `AgentGateway` resources that claim the `krakend` class, discovers all exposed agents in the cluster, generates a KrakenD configuration, and deploys a KrakenD instance that routes traffic to those agents.
+
+The operator also ships two custom KrakenD plugins — `agentcard-rw` for A2A agent-card path rewriting and `openai-a2a` for OpenAI-compatible model-list and chat-completion endpoints — making agent traffic accessible to both A2A-native clients and OpenAI-compatible clients from a single gateway deployment.
+
+== Why it exists
+
+The `AgentGateway` and `AgentGatewayClass` CRDs in the Agent Runtime Operator define a declaration-only contract: what the platform wants (replicas, timeout, guardrail references) without dictating how the gateway is implemented. A separate implementation operator is needed to turn that declaration into a running workload.
+
+KrakenD was chosen as the first reference implementation for several reasons. Its entire routing configuration is expressed as a single JSON document, which maps cleanly to a Kubernetes `ConfigMap` — the operator regenerates the JSON whenever agents are added or removed and Kubernetes rolls the pod automatically when the config hash changes. KrakenD's plugin system allows custom request-handling behaviour to be compiled in and loaded at startup, which is how A2A path translation and the OpenAI-compatible API surface are provided without forking the KrakenD binary. Finally, KrakenD is stateless and horizontally scalable, matching the replica-based model that `AgentGateway.spec.replicas` expresses.
+
+== How it fits
+
+The operator plugs into the Agent Runtime Operator ecosystem via the `AgentGatewayClass` resource. On startup the operator ensures that an `AgentGatewayClass` named `krakend` exists with `spec.controller: runtime.agentic-layer.ai/agent-gateway-krakend-controller`. Any `AgentGateway` resource whose `spec.agentGatewayClassName` is `krakend` is then claimed and reconciled by this operator.
+
+When the operator reconciles an `AgentGateway`, it lists all `Agent` resources across all namespaces with `spec.exposed: true`, builds a KrakenD JSON configuration from the discovered agents, stores it in a `ConfigMap`, and creates or updates a KrakenD `Deployment` and `Service` in the same namespace as the gateway. Agent changes trigger re-reconciliation via a watch on `Agent` resources, so the generated configuration stays current without manual intervention.
+
+A2A clients can reach each agent at `+/{namespace}/{agent-name}+` (or the shorthand `+/{agent-name}+` when the name is unique). OpenAI-compatible clients can enumerate agents at `GET /models` and route requests at `POST /chat/completions` using the namespaced agent name as the `model` value. For the broader architectural context — how `AgentGateway` and `AgentGatewayClass` compose in the Agentic Layer — see xref:agent-runtime-operator:agent-gateways:explanation.adoc[].
+
+== Trade-offs and alternatives
+
+=== KrakenD vs. other gateway implementations
+
+KrakenD's declarative, file-driven model means the operator can produce the complete routing table as a single JSON document, which is easy to inspect and debug. The trade-off is that every change to the agent inventory requires regenerating and reloading the entire configuration, which triggers a pod rollout. For clusters with very high agent churn, a gateway that supports hot-reload or incremental config push (such as Envoy xDS) would roll out changes without pod restarts.
+
+=== Bundled plugins vs. sidecar adapters
+
+The custom A2A and OpenAI-compatibility logic is compiled into the KrakenD image as shared-library plugins (`agentcard-rw`, `openai-a2a`). This keeps the deployment to a single container, avoids inter-process communication overhead, and simplifies resource accounting. The cost is that updating a plugin requires a new KrakenD image tag and an operator upgrade. A sidecar or `ext_proc` adapter would allow independent plugin updates but at the cost of additional containers and network hops per request.
+
+=== Class-based selection vs. label-based dispatch
+
+The operator uses the `AgentGatewayClass` name to claim gateways rather than a label selector. This makes the intent explicit — the gateway manifest declares exactly which implementation it expects — and follows the same convention as the Kubernetes Gateway API. Teams that want multiple gateway implementations in one cluster can do so without risk of conflicting claims.
+
+== Related
+
+* xref:agent-gateway-krakend-operator::how-to-guides/install.adoc[]
+* xref:agent-gateway-krakend-operator::reference.adoc[]
+* xref:agent-runtime-operator:agent-gateways:explanation.adoc[]
