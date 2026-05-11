@@ -17,22 +17,24 @@ This guide walks you through installing the KrakenD Agent Gateway Operator on yo
 +
 [source,bash]
 ----
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.19.1/cert-manager.yaml
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=cert-manager -n cert-manager --timeout=60s
 ----
++
+Browse all cert-manager releases at https://github.com/cert-manager/cert-manager/releases.
 * xref:agent-runtime-operator:agent-runtime:how-to-guides/install.adoc[Agent Runtime Operator] installed (provides the required `AgentGateway` and `AgentGatewayClass` CRDs).
 
 == Install with kubectl
 
 [source,bash]
 ----
-# Install the operator
-kubectl apply -f https://github.com/agentic-layer/agent-gateway-krakend-operator/releases/download/v0.2.1/install.yaml
+# Install the operator (always pulls the latest release)
+kubectl apply -f https://github.com/agentic-layer/agent-gateway-krakend-operator/releases/latest/download/install.yaml
 # Wait for the operator to be ready
 kubectl wait --for=condition=Available --timeout=60s -n agent-gateway-krakend-operator-system deployment/agent-gateway-krakend-operator-controller-manager
 ----
 
-Find the latest version at https://github.com/agentic-layer/agent-gateway-krakend-operator/releases/
+Browse all releases at https://github.com/agentic-layer/agent-gateway-krakend-operator/releases.
 
 == Install with Flux
 
