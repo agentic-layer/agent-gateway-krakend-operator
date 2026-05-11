@@ -1,9 +1,1 @@
-.How-To Guides
-* xref:how-to-guides/install.adoc[]
-* xref:how-to-guides/create-gateway.adoc[]
-
-.Reference
-* xref:reference.adoc[]
-
-.Explanation
-* xref:explanation.adoc[]
+include::partial$nav.adoc[]
